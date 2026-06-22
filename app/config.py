@@ -1,0 +1,89 @@
+"""Application configuration via Pydantic Settings."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # ── Database ──────────────────────────────────────────────────────
+    # Default: SQLite for local dev. Swap to postgres+asyncpg for prod.
+    database_url: str = "sqlite+aiosqlite:///./data/inventory.db"
+
+    # ── FastAPI ────────────────────────────────────────────────────────
+    host: str = "0.0.0.0"
+    port: int = 8000
+    cors_origins: str = '["http://localhost:5173","http://localhost:3000"]'
+    log_level: str = "INFO"
+
+    # ── WooCommerce ────────────────────────────────────────────────────
+    wood_commerce_url: str = ""
+    wood_commerce_consumer_key: str = ""
+    wood_commerce_consumer_secret: str = ""
+
+    # ── Mercado Livre ─────────────────────────────────────────────────
+    ml_client_id: str = ""
+    ml_client_secret: str = ""
+    ml_redirect_uri: str = "http://localhost:8000/v1/mercadolivre/callback"
+    ml_access_token: str = ""
+    ml_refresh_token: str = ""
+    ml_user_id: int = 0
+    ml_default_category: str = "MLB271793"  # Ferramentas (fallback)
+
+    # ── OSPOS ──────────────────────────────────────────────────────────
+    ospos_db_host: str = "localhost"
+    ospos_db_port: int = 3306
+    ospos_db_name: str = "ospos"
+    ospos_db_user: str = "root"
+    ospos_db_pass: str = ""
+    ospos_api_url: str = ""  # REST fallback (optional)
+
+    # ── CDC Agent ─────────────────────────────────────────────────────
+    cdc_enabled: bool = True
+    cdc_poll_interval: int = 30  # seconds
+
+    # ── Convenience properties ─────────────────────────────────────────
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return json.loads(self.cors_origins)
+
+    @property
+    def database_url_async(self) -> str:
+        """Return the DATABASE_URL suitable for async drivers.
+
+        SQLAlchemy async drivers need ``sqlite+aiosqlite://`` or
+        ``postgresql+asyncpg://``.  If the user-provided URL already
+        carries a ``+`` suffix it is returned as-is.
+        """
+        url = self.database_url
+        if "+" in url.split("://")[0]:
+            return url
+        # Auto-pick a default async driver
+        if url.startswith("sqlite"):
+            return url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+        if url.startswith("postgresql"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return url
+
+    @property
+    def database_url_sync(self) -> str:
+        """Return a sync-compatible URL for Alembic and scripts."""
+        return self.database_url
+
+
+# Module-level singleton
+settings = Settings()
+
+# Ensure data directory exists (for SQLite)
+_data_dir = Path(__file__).resolve().parent.parent / "data"
+_data_dir.mkdir(parents=True, exist_ok=True)

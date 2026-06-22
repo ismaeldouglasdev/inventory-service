@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+data/                  # SQLite databases (dev)
+.env                   # local secrets (never commit)
+*.db
+*.sqlite3
+
+# Docker
+.docker/
+
+# Alembic (don't commit local generated stamps)
+alembic/versions/*.pyc
+
+# Logs
+*.log
+logs/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/

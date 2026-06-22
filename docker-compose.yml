@@ -1,0 +1,84 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: inventory-app
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: "${DATABASE_URL:-sqlite+aiosqlite:///./data/inventory.db}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-[\"http://localhost:5173\"]}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      WOOD_COMMERCE_URL: "${WOOD_COMMERCE_URL:-}"
+      WOOD_COMMERCE_CONSUMER_KEY: "${WOOD_COMMERCE_CONSUMER_KEY:-}"
+      WOOD_COMMERCE_CONSUMER_SECRET: "${WOOD_COMMERCE_CONSUMER_SECRET:-}"
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - inventory-net
+
+  db:
+    image: postgres:16-alpine
+    container_name: inventory-db
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: "${DB_USER:-inventory}"
+      POSTGRES_PASSWORD: "${DB_PASS:-inventory}"
+      POSTGRES_DB: "${DB_NAME:-inventory}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-inventory} -d ${DB_NAME:-inventory}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - inventory-net
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: inventory-pgadmin
+    restart: unless-stopped
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: "${PGADMIN_EMAIL:-admin@inventory.local}"
+      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASS:-admin}"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - db
+    networks:
+      - inventory-net
+
+  store:
+    build:
+      context: ../loja-online
+      dockerfile: Dockerfile
+    container_name: quase-tudo-store
+    restart: unless-stopped
+    ports:
+      - "${STORE_PORT:-8080}:80"
+    environment:
+      - API_HOST=app
+      - API_PORT=8000
+    depends_on:
+      - app
+    networks:
+      - inventory-net
+
+volumes:
+  app_data:
+  postgres_data:
+  pgadmin_data:
+
+networks:
+  inventory-net:
+    driver: bridge

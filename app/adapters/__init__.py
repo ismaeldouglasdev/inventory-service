@@ -1,0 +1,1 @@
+"""Marketplace adapter implementations."""
