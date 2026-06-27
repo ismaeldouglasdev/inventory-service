@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     ospos_db_pass: str = ""
     ospos_api_url: str = ""  # REST fallback (optional)
 
+    # ── AI / LLM ────────────────────────────────────────────────────────
+    ai_api_url: str = ""
+    ai_api_key: str = ""
+    ai_model: str = "gpt-4o"
+    ai_max_images: int = 4
+
     # ── CDC Agent ─────────────────────────────────────────────────────
     cdc_enabled: bool = True
     cdc_poll_interval: int = 30  # seconds

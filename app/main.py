@@ -29,6 +29,7 @@ from app.api.v1.store import router as store_router
 from app.api.v1.sell import _set_registry as _set_sell_registry
 from app.api.v1.sell import _set_circuit_breaker as _set_sell_cb
 from app.api.v1.sell import router as sell_router
+from app.api.v1.onboarding import router as onboarding_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
 from app.services.event_processor import EventStoreProcessor
@@ -163,3 +164,4 @@ app.include_router(woocommerce_router, prefix="/v1")
 app.include_router(shopee_router, prefix="/v1")
 app.include_router(store_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")
+app.include_router(onboarding_router, prefix="/v1")
