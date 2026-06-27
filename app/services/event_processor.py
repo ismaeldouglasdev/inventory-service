@@ -36,6 +36,7 @@ from app.adapters.base import MarketplaceAdapter
 from app.adapters.registry import AdapterRegistry, AdapterRegistryError
 from app.database import async_session_factory
 from app.models.event_store import EventStore
+from app.services.channel_dispatcher import ChannelDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -111,11 +112,13 @@ class EventStoreProcessor:
         registry: AdapterRegistry,
         batch_size: int = 10,
         poll_interval: float = 5.0,
+        dispatcher: ChannelDispatcher | None = None,
     ) -> None:
         self.registry = registry
         self.batch_size = batch_size
         self.poll_interval = poll_interval
         self._running = False
+        self._dispatcher = dispatcher or ChannelDispatcher(registry)
 
     # ── API pública ───────────────────────────────────────────────────
 
@@ -304,8 +307,8 @@ class EventStoreProcessor:
                 error=f"Tipo de evento desconhecido: {event.event_type}",
             )
 
-        # 3. Determina quais canais processar
-        channels_to_process = self._resolve_channels(event)
+        # 3. Determina quais canais processar (com dispatcher: prioridade + rate + CB + buffer)
+        channels_to_process = await self._resolve_channels_async(event)
 
         if not channels_to_process:
             logger.warning(
@@ -374,15 +377,9 @@ class EventStoreProcessor:
             channels_fail=channels_fail or None,
         )
 
-    def _resolve_channels(self, event: EventStore) -> list[str]:
-        """Resolve quais canais devem processar este evento.
-
-        Se o evento tem um canal específico, usa só ele.
-        Se não, usa todos os adapters registrados.
-        Se é PARTIAL, usa só os que falharam (lê do payload).
-        """
+    async def _resolve_channels_async(self, event: EventStore) -> list[str]:
+        """Async channel resolution via dispatcher (rate-limit, CB, priority, buffer)."""
         if event.state == "partial":
-            # Tenta ler do payload quais canais falharam
             payload = json.loads(event.payload)
             failed = payload.get("_failed_channels", [])
             if failed:
@@ -391,7 +388,29 @@ class EventStoreProcessor:
         if event.channel:
             return [event.channel]
 
-        return self.registry.channel_names()
+        payload = json.loads(event.payload)
+        stock = payload.get("quantity") if event.event_type == "stock.updated" else None
+        return await self._dispatcher.resolve(
+            event.event_type, sku=event.sku, stock=stock,
+        )
+
+    def _resolve_channels(self, event: EventStore) -> list[str]:
+        """Sync fallback — priority ordering only (no rate/CB/buffer)."""
+        if event.state == "partial":
+            payload = json.loads(event.payload)
+            failed = payload.get("_failed_channels", [])
+            if failed:
+                return failed
+        if event.channel:
+            return [event.channel]
+        return sorted(
+            self.registry.channel_names(),
+            key=lambda ch: (
+                ["mercadolivre", "shopee", "woocommerce"].index(ch)
+                if ch in ["mercadolivre", "shopee", "woocommerce"]
+                else 999
+            ),
+        )
 
     async def _call_handler(
         self,
