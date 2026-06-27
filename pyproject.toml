@@ -13,6 +13,7 @@ dependencies = [
     "alembic>=1.13.0",
     "httpx>=0.27.0",
     "python-dotenv>=1.0",
+    "python-multipart>=0.0.32",
     "pycryptodome>=3.20.0",
     "aiomysql>=0.2.0",
 ]
