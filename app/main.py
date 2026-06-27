@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.implementations.woocommerce import WooCommerceAdapter
 from app.adapters.implementations.mercadolivre import MercadoLivreAdapter
+from app.adapters.implementations.shopee import ShopeeAdapter
 from app.adapters.registry import AdapterRegistry
 from app.api.v1.health import _set_registry as _set_health_registry
 from app.api.v1.health import router as health_router
@@ -21,6 +22,8 @@ from app.api.v1.mercadolivre import _set_registry as _set_ml_registry
 from app.api.v1.mercadolivre import router as mercadolivre_router
 from app.api.v1.woocommerce import _set_registry as _set_wc_registry
 from app.api.v1.woocommerce import router as woocommerce_router
+from app.api.v1.shopee import _set_registry as _set_shopee_registry
+from app.api.v1.shopee import router as shopee_router
 from app.api.v1.store import _set_store_sync as _set_store_sync_ref
 from app.api.v1.store import router as store_router
 from app.api.v1.sell import _set_registry as _set_sell_registry
@@ -64,6 +67,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
             "WOOD_COMMERCE_CONSUMER_KEY not set"
         )
 
+    # Shopee
+    if settings.shopee_partner_id and settings.shopee_api_key:
+        shopee_adapter = ShopeeAdapter()
+        registry.register(shopee_adapter)
+        logger.info("Shopee adapter registered")
+    else:
+        logger.info(
+            "Shopee adapter skipped — SHOPEE_PARTNER_ID or "
+            "SHOPEE_API_KEY not set"
+        )
+
     # Mercado Livre
     if settings.ml_client_id and settings.ml_client_secret:
         ml_adapter = MercadoLivreAdapter()
@@ -79,6 +93,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _set_health_registry(registry)
     _set_ml_registry(registry)
     _set_wc_registry(registry)
+    _set_shopee_registry(registry)
     _set_sell_registry(registry)
     _set_sell_cb(cb := CircuitBreaker())
 
@@ -145,5 +160,6 @@ app.include_router(health_router, prefix="/v1")
 app.include_router(products_router, prefix="/v1")
 app.include_router(mercadolivre_router, prefix="/v1")
 app.include_router(woocommerce_router, prefix="/v1")
+app.include_router(shopee_router, prefix="/v1")
 app.include_router(store_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")

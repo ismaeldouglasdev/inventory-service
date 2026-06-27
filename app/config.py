@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     ml_user_id: int = 0
     ml_default_category: str = "MLB271793"  # Ferramentas (fallback)
 
+    # ── Shopee ──────────────────────────────────────────────────────────
+    shopee_partner_id: int = 0
+    shopee_api_key: str = ""
+    shopee_redirect_uri: str = "http://localhost:8000/v1/shopee/callback"
+    shopee_sandbox: bool = True
+    shopee_access_token: str = ""
+    shopee_refresh_token: str = ""
+    shopee_shop_id: int = 0
+
     # ── OSPOS ──────────────────────────────────────────────────────────
     ospos_db_host: str = "localhost"
     ospos_db_port: int = 3306
