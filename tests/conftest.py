@@ -14,6 +14,21 @@ from app.config import settings
 
 settings.database_url = "sqlite+aiosqlite://"
 
+# Import ALL models so Base.metadata knows about them for test DB creation
+from app.models import (  # noqa: F401
+    ProductMapping,
+    ChannelProductMapping,
+    ChannelVariantMapping,
+    ChannelFeeConfig,
+    ChannelState,
+    EventStore,
+    OnboardingSession,
+    OnboardingImage,
+    StoreProduct,
+    InventoryState,
+    ProcessedAction,
+)
+
 from app.adapters.base import MarketplaceAdapter
 from app.adapters.registry import AdapterRegistry
 

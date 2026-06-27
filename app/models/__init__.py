@@ -12,6 +12,8 @@ from app.models.channel_state import ChannelState
 from app.models.event_store import EventStore
 from app.models.onboarding import OnboardingSession, OnboardingImage
 from app.models.store_product import StoreProduct
+from app.models.inventory_state import InventoryState
+from app.models.processed_action import ProcessedAction
 
 __all__ = [
     "ProductMapping",
@@ -23,4 +25,6 @@ __all__ = [
     "OnboardingSession",
     "OnboardingImage",
     "StoreProduct",
+    "InventoryState",
+    "ProcessedAction",
 ]

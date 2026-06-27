@@ -23,10 +23,14 @@ from app.api.v1.woocommerce import _set_registry as _set_wc_registry
 from app.api.v1.woocommerce import router as woocommerce_router
 from app.api.v1.store import _set_store_sync as _set_store_sync_ref
 from app.api.v1.store import router as store_router
+from app.api.v1.sell import _set_registry as _set_sell_registry
+from app.api.v1.sell import _set_circuit_breaker as _set_sell_cb
+from app.api.v1.sell import router as sell_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
 from app.services.event_processor import EventStoreProcessor
 from app.services.store_sync import StoreSync
+from app.services.circuit_breaker import CircuitBreaker
 
 # ── Logging ────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -75,6 +79,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _set_health_registry(registry)
     _set_ml_registry(registry)
     _set_wc_registry(registry)
+    _set_sell_registry(registry)
+    _set_sell_cb(cb := CircuitBreaker())
 
     # ── Start CDC Agent ──────────────────────────────────────────────
     _set_cdc_agent(cdc_agent)
@@ -140,3 +146,4 @@ app.include_router(products_router, prefix="/v1")
 app.include_router(mercadolivre_router, prefix="/v1")
 app.include_router(woocommerce_router, prefix="/v1")
 app.include_router(store_router, prefix="/v1")
+app.include_router(sell_router, prefix="/v1")

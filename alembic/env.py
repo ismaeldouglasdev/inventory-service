@@ -27,6 +27,8 @@ from app.models import (  # noqa: F401  isort:skip
     OnboardingSession,
     OnboardingImage,
     StoreProduct,
+    InventoryState,
+    ProcessedAction,
 )
 
 # ── Alembic Config ─────────────────────────────────────────────────────
