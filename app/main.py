@@ -7,14 +7,19 @@ import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from app.adapters.implementations.woocommerce import WooCommerceAdapter
 from app.adapters.implementations.mercadolivre import MercadoLivreAdapter
 from app.adapters.implementations.shopee import ShopeeAdapter
 from app.adapters.registry import AdapterRegistry
-from app.api.v1.health import _set_registry as _set_health_registry
+from app.api.v1.health import (
+    _set_registry as _set_health_registry,
+    _set_circuit_breaker as _set_health_cb,
+    _set_start_time,
+)
 from app.api.v1.health import router as health_router
 from app.api.v1.products import _set_cdc_agent
 from app.api.v1.products import router as products_router
@@ -29,18 +34,22 @@ from app.api.v1.store import router as store_router
 from app.api.v1.sell import _set_registry as _set_sell_registry
 from app.api.v1.sell import _set_circuit_breaker as _set_sell_cb
 from app.api.v1.sell import router as sell_router
+from app.api.v1.admin import (
+    _set_registry as _set_admin_registry,
+    _set_circuit_breaker as _set_admin_cb,
+)
+from app.api.v1.admin import router as admin_router
 from app.api.v1.onboarding import router as onboarding_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
 from app.services.event_processor import EventStoreProcessor
 from app.services.store_sync import StoreSync
 from app.services.circuit_breaker import CircuitBreaker
+from app.utils.logging import setup_logging
+from app.utils.metrics import generate_metrics
 
 # ── Logging ────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -48,57 +57,50 @@ logger = logging.getLogger(__name__)
 registry = AdapterRegistry()
 cdc_agent = CDCAgent(poll_interval=settings.cdc_poll_interval)
 event_processor = EventStoreProcessor(registry, poll_interval=5.0)
+circuit_breaker = CircuitBreaker()
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup / shutdown lifecycle."""
     logger.info("Starting Inventory Service v0.1.0")
 
+    _set_start_time()
+
     # ── Adapter registry ────────────────────────────────────────────
-    # WooCommerce
     if settings.wood_commerce_url and settings.wood_commerce_consumer_key:
         wc_adapter = WooCommerceAdapter()
         registry.register(wc_adapter)
         logger.info("WooCommerce adapter registered")
     else:
-        logger.info(
-            "WooCommerce adapter skipped — WOOD_COMMERCE_URL or "
-            "WOOD_COMMERCE_CONSUMER_KEY not set"
-        )
+        logger.info("WooCommerce adapter skipped — WOOD_COMMERCE_URL or WOOD_COMMERCE_CONSUMER_KEY not set")
 
-    # Shopee
     if settings.shopee_partner_id and settings.shopee_api_key:
         shopee_adapter = ShopeeAdapter()
         registry.register(shopee_adapter)
         logger.info("Shopee adapter registered")
     else:
-        logger.info(
-            "Shopee adapter skipped — SHOPEE_PARTNER_ID or "
-            "SHOPEE_API_KEY not set"
-        )
+        logger.info("Shopee adapter skipped — SHOPEE_PARTNER_ID or SHOPEE_API_KEY not set")
 
-    # Mercado Livre
     if settings.ml_client_id and settings.ml_client_secret:
         ml_adapter = MercadoLivreAdapter()
         registry.register(ml_adapter)
         logger.info("Mercado Livre adapter registered")
     else:
-        logger.info(
-            "Mercado Livre adapter skipped — ML_CLIENT_ID or "
-            "ML_CLIENT_SECRET not set"
-        )
+        logger.info("Mercado Livre adapter skipped — ML_CLIENT_ID or ML_CLIENT_SECRET not set")
 
-    # ── Inject registry into route modules ───────────────────────────
+    # ── Inject registry + CB into route modules ─────────────────────
     _set_health_registry(registry)
+    _set_health_cb(circuit_breaker)
+    _set_admin_registry(registry)
+    _set_admin_cb(circuit_breaker)
     _set_ml_registry(registry)
     _set_wc_registry(registry)
     _set_shopee_registry(registry)
     _set_sell_registry(registry)
-    _set_sell_cb(cb := CircuitBreaker())
+    _set_sell_cb(circuit_breaker)
 
-    # ── Start CDC Agent ──────────────────────────────────────────────
+    # ── Start CDC Agent ─────────────────────────────────────────────
     _set_cdc_agent(cdc_agent)
     if settings.cdc_enabled:
         cdc_task = asyncio.create_task(cdc_agent.run_forever())
@@ -112,16 +114,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _set_store_sync_ref(store_sync)
     logger.info("StoreSync service registered")
 
-    # ── Start EventStore Processor ───────────────────────────────────
+    # ── Start EventStore Processor ──────────────────────────────────
     processor_task = asyncio.create_task(event_processor.run_forever())
     logger.info("EventStore Processor started (poll every %.1fs)", event_processor.poll_interval)
 
     yield
 
-    # ── Shutdown ─────────────────────────────────────────────────────
+    # ── Shutdown ────────────────────────────────────────────────────
     logger.info("Shutting down Inventory Service")
 
-    # Stop CDC Agent
     if cdc_task is not None:
         cdc_agent.stop()
         cdc_task.cancel()
@@ -130,7 +131,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         except asyncio.CancelledError:
             pass
 
-    # Stop EventStore Processor
     event_processor.stop()
     processor_task.cancel()
     try:
@@ -138,11 +138,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     except asyncio.CancelledError:
         pass
 
+    logger.info("Shutdown complete")
+
 
 # ── App ──────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Inventory Service",
-    description="Omnichannel adapter bridging OSPOS with WooCommerce, Shopee, ML",
+    description="Omnichannel adapter bridging OSPOS with WooCommerce, Shopee, ML. With observability, rate limiting, and health tracking.",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -156,8 +158,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Metrics endpoint ────────────────────────────────────────────────────
+@app.get("/metrics", response_class=PlainTextResponse, include_in_schema=True)
+async def metrics_endpoint() -> PlainTextResponse:
+    """Prometheus metrics endpoint — scraped by Prometheus or checked manually."""
+    return PlainTextResponse(
+        content=generate_metrics().decode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+    )
+
+
 # ── Routers ─────────────────────────────────────────────────────────────
 app.include_router(health_router, prefix="/v1")
+app.include_router(admin_router, prefix="/v1")
 app.include_router(products_router, prefix="/v1")
 app.include_router(mercadolivre_router, prefix="/v1")
 app.include_router(woocommerce_router, prefix="/v1")

@@ -32,6 +32,11 @@ from sqlalchemy import select, update, insert
 from app.database import async_session_factory
 from app.models.channel_state import ChannelState
 from app.models.processed_action import ProcessedAction
+from app.utils.metrics import (
+    adapter_failures,
+    circuit_breaker_failures,
+    circuit_breaker_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +112,8 @@ class CircuitBreaker:
         """
         state = await self._get_state(channel)
         await self._set_status(channel, "CLOSED", failure_count=0)
+        circuit_breaker_state.labels(channel=channel).set(0)
+        circuit_breaker_failures.labels(channel=channel).set(0)
 
         if state and state.status != "CLOSED":
             logger.info("Circuit %s: %s → CLOSED (success)", channel, state.status)
@@ -120,6 +127,9 @@ class CircuitBreaker:
         failures = (state.failure_count if state else 0) + 1
         now = datetime.now(timezone.utc)
 
+        adapter_failures.labels(channel=channel, operation="api_call").inc()
+        circuit_breaker_failures.labels(channel=channel).set(failures)
+
         if failures >= self.threshold:
             open_until = now + timedelta(seconds=self.cooldown)
             await self._set_status(
@@ -129,17 +139,21 @@ class CircuitBreaker:
                 last_failure=now,
                 open_until=open_until,
             )
+            circuit_breaker_state.labels(channel=channel).set(2)
             logger.warning(
                 "Circuit %s → OPEN (%d failures, cooldown=%ds)",
                 channel, failures, self.cooldown,
             )
         else:
+            new_status = state.status if state else "CLOSED"
             await self._set_status(
                 channel,
-                state.status if state else "CLOSED",
+                new_status,
                 failure_count=failures,
                 last_failure=now,
             )
+            cb_val = 0 if new_status == "CLOSED" else (1 if new_status == "HALF_OPEN" else 2)
+            circuit_breaker_state.labels(channel=channel).set(cb_val)
             logger.info(
                 "Circuit %s: failure %d/%d",
                 channel, failures, self.threshold,

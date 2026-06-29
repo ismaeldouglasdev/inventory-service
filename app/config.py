@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: str = '["http://localhost:5173","http://localhost:3000"]'
     log_level: str = "INFO"
+    log_format: str = "text"  # "json" or "text"
+
+    # ── Observability ──────────────────────────────────────────────────
+    metrics_enabled: bool = True
+    metrics_host: str = ""  # separate metrics server host (optional)
+    metrics_port: int = 8001  # separate metrics server port
+    sentry_dsn: str = ""
 
     # ── WooCommerce ────────────────────────────────────────────────────
     wood_commerce_url: str = ""
