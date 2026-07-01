@@ -7,9 +7,17 @@ import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+
+from app.utils.metrics import (
+    requests_total,
+    request_duration,
+    requests_in_flight,
+)
 
 from app.adapters.implementations.woocommerce import WooCommerceAdapter
 from app.adapters.implementations.mercadolivre import MercadoLivreAdapter
@@ -158,6 +166,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Metrics middleware ──────────────────────────────────────────────────
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    method = request.method
+    path = request.url.path
+    start = time.time()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        duration = time.time() - start
+        requests_total.labels(method=method, endpoint=path, status=str(status)).inc()
+        request_duration.labels(method=method, endpoint=path).observe(duration)
 
 # ── Metrics endpoint ────────────────────────────────────────────────────
 @app.get("/metrics", response_class=PlainTextResponse, include_in_schema=True)
