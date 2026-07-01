@@ -40,6 +40,7 @@ from app.api.v1.admin import (
 )
 from app.api.v1.admin import router as admin_router
 from app.api.v1.onboarding import router as onboarding_router
+from app.api.v1.agent_bridge import router as agent_bridge_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
 from app.services.event_processor import EventStoreProcessor
@@ -178,3 +179,4 @@ app.include_router(shopee_router, prefix="/v1")
 app.include_router(store_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")
 app.include_router(onboarding_router, prefix="/v1")
+app.include_router(agent_bridge_router, prefix="/v1")
