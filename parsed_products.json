@@ -1,0 +1,182 @@
+{
+  "product_count": 198689,
+  "unique_autoincs": 9824,
+  "unique_descriptions": 20,
+  "sample_products": [
+    {
+      "autoinc": 9,
+      "_page": 11,
+      "_offset": 45,
+      "descricao": "\u0002"
+    },
+    {
+      "autoinc": 39,
+      "_page": 11,
+      "_offset": 58,
+      "descricao": "\u0003"
+    },
+    {
+      "autoinc": 40,
+      "_page": 11,
+      "_offset": 71,
+      "descricao": "\u0004"
+    },
+    {
+      "autoinc": 41,
+      "_page": 11,
+      "_offset": 84,
+      "descricao": "\u0005"
+    },
+    {
+      "autoinc": 42,
+      "_page": 11,
+      "_offset": 97,
+      "descricao": "\u0006"
+    },
+    {
+      "autoinc": 43,
+      "_page": 11,
+      "_offset": 110,
+      "descricao": "\u0007"
+    },
+    {
+      "autoinc": 44,
+      "_page": 11,
+      "_offset": 123,
+      "descricao": "\b"
+    },
+    {
+      "autoinc": 52,
+      "_page": 11,
+      "_offset": 201,
+      "descricao": "\u000e"
+    },
+    {
+      "autoinc": 53,
+      "_page": 11,
+      "_offset": 214,
+      "descricao": "\u000f"
+    },
+    {
+      "autoinc": 54,
+      "_page": 11,
+      "_offset": 227,
+      "descricao": "\u0010"
+    },
+    {
+      "autoinc": 55,
+      "_page": 11,
+      "_offset": 240,
+      "descricao": "\u0011"
+    },
+    {
+      "autoinc": 56,
+      "_page": 11,
+      "_offset": 253,
+      "descricao": "\u0012"
+    },
+    {
+      "autoinc": 57,
+      "_page": 11,
+      "_offset": 266,
+      "descricao": "\u0013"
+    },
+    {
+      "autoinc": 60,
+      "_page": 11,
+      "_offset": 279,
+      "descricao": "\u0014"
+    },
+    {
+      "autoinc": 83,
+      "_page": 11,
+      "_offset": 292,
+      "descricao": "\u0015"
+    },
+    {
+      "autoinc": 87,
+      "_page": 11,
+      "_offset": 305,
+      "descricao": "\u0016"
+    },
+    {
+      "autoinc": 88,
+      "_page": 11,
+      "_offset": 318,
+      "descricao": "\u0017"
+    },
+    {
+      "autoinc": 90,
+      "_page": 11,
+      "_offset": 331,
+      "descricao": "\u0018"
+    },
+    {
+      "autoinc": 91,
+      "_page": 11,
+      "_offset": 344,
+      "descricao": "\u0019"
+    },
+    {
+      "autoinc": 92,
+      "_page": 11,
+      "_offset": 357,
+      "descricao": "\u001a"
+    }
+  ],
+  "products_with_images": [
+    [
+      2114,
+      [
+        {
+          "type": "graphic",
+          "page": 1342177280
+        },
+        {
+          "type": "graphic",
+          "page": 2080374784
+        }
+      ]
+    ],
+    [
+      3545,
+      [
+        {
+          "type": "graphic",
+          "page": 1342177280
+        },
+        {
+          "type": "graphic",
+          "page": 2080374784
+        }
+      ]
+    ],
+    [
+      11265,
+      [
+        {
+          "type": "graphic",
+          "page": 2080374784
+        }
+      ]
+    ],
+    [
+      5771,
+      [
+        {
+          "type": "graphic",
+          "page": 1073741824
+        }
+      ]
+    ],
+    [
+      10374,
+      [
+        {
+          "type": "graphic",
+          "page": 2332033024
+        }
+      ]
+    ]
+  ]
+}
