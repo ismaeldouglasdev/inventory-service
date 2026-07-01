@@ -103,12 +103,13 @@ async def list_store_products(
     page: int = Query(1, ge=1, le=1000),
     per_page: int = Query(20, ge=1, le=100),
     sort: str = Query("name", pattern=r"^(name|price_asc|price_desc)$"),
+    has_image: Optional[bool] = Query(None, description="Filter: only products with images"),
     session: AsyncSession = Depends(get_session),
 ) -> Any:
     """List products visible in the store.
 
-    Only returns products where ``store_visible=True`` (stock > 0
-    and an image has been uploaded).
+    Only returns products where ``store_visible=True``.
+    Use ``has_image=true`` to show only products that have an uploaded image.
     """
     query = select(StoreProduct).where(StoreProduct.store_visible == True)  # noqa: E712
 
@@ -117,6 +118,10 @@ async def list_store_products(
         query = query.where(
             StoreProduct.name.ilike(f"%{search}%")
         )
+
+    # ── Image filter ─────────────────────────────────────────────────
+    if has_image is True:
+        query = query.where(StoreProduct.image_url.isnot(None))
 
     # ── Category filter ──────────────────────────────────────────────
     if category:
