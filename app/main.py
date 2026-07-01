@@ -7,6 +7,7 @@ import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
+import re
 import time
 
 from fastapi import FastAPI, Request
@@ -167,21 +168,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Metrics middleware ──────────────────────────────────────────────────
-@app.middleware("http")
-async def metrics_middleware(request: Request, call_next):
-    method = request.method
-    path = request.url.path
-    start = time.time()
-    status = 500
-    try:
-        response = await call_next(request)
-        status = response.status_code
-        return response
-    finally:
-        duration = time.time() - start
-        requests_total.labels(method=method, endpoint=path, status=str(status)).inc()
-        request_duration.labels(method=method, endpoint=path).observe(duration)
+# ── Path normalization ─────────────────────────────────────────────────
+_PATH_PATTERNS = [
+    (re.compile(r"^/v1/store/images/product_\d+\.[a-z]+$"), "/v1/store/images/{id}"),
+    (re.compile(r"^/v1/store/products/\d+$"), "/v1/store/products/{id}"),
+    (re.compile(r"^/v1/admin/products/\d+$"), "/v1/admin/products/{id}"),
+]
+
+
+def _normalize_path(path: str) -> str:
+    for pattern, replacement in _PATH_PATTERNS:
+        if pattern.match(path):
+            return replacement
+    return path
+
+
+# ── ASGI Metrics middleware ─────────────────────────────────────────────
+from starlette.types import ASGIApp, Scope, Receive, Send
+
+
+class MetricsASGIMiddleware:
+    """ASGI middleware that records request metrics (count, duration, in-flight)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "GET")
+        path = _normalize_path(scope.get("path", "/unknown"))
+        start = time.time()
+        status = [500]
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                status[0] = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            duration = time.time() - start
+            requests_total.labels(method=method, endpoint=path, status=str(status[0])).inc()
+            request_duration.labels(method=method, endpoint=path).observe(duration)
+
+
+app.add_middleware(MetricsASGIMiddleware)
 
 # ── Metrics endpoint ────────────────────────────────────────────────────
 @app.get("/metrics", response_class=PlainTextResponse, include_in_schema=True)
