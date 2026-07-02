@@ -1,3 +1,7 @@
+<p align="center">
+  <strong>🇧🇷 Português</strong> &nbsp;|&nbsp; <a href="README.en.md">🇺🇸 English</a>
+</p>
+
 # Inventory Service — Omnichannel Adapter
 
 Bridge entre **OSPOS** (PDV local) e marketplaces digitais (Shopee, Mercado Livre, WooCommerce), com loja online, pipeline de vendas e onboarding inteligente via IA.
