@@ -33,6 +33,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
+# ── Observability hooks (optional) ─────────────────────────────────────
+try:
+    from app.api.v1.observability import (
+        notify_message_sent,
+        notify_message_pending,
+        notify_agent_status,
+        notify_agent_registered,
+    )
+    _OBSERVABILITY_ENABLED = True
+except ImportError:
+    _OBSERVABILITY_ENABLED = False
+    logger.warning("AgentBridge: observability module not available — metrics/SSE disabled")
+
 # ── Message queue (file-backed for persistence) ──────────────────────────
 MESSAGES_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "agent_messages"
 MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -42,12 +55,13 @@ def _next_id() -> str:
     return f"{int(time.time() * 1000000)}-{os.urandom(4).hex()}"
 
 
-def _save_message(msg: dict) -> None:
+def _save_message(msg: dict) -> str:
     msg_id = _next_id()
     msg["id"] = msg_id
     msg["timestamp"] = time.time()
     (MESSAGES_DIR / f"{msg_id}.json").write_text(json.dumps(msg, ensure_ascii=False))
     logger.info("AgentBridge: message %s saved (to=%s, type=%s)", msg_id, msg.get("to"), msg.get("type"))
+    return msg_id
 
 
 def _load_messages(target: str, limit: int = 10) -> list[dict]:
@@ -109,8 +123,10 @@ async def agent_ping():
 @router.post("/send")
 async def agent_send(msg: AgentMessage):
     """Envia uma mensagem para a fila do agente destino."""
-    _save_message(msg.model_dump())
-    return {"ok": True, "message_id": _next_id()}
+    msg_id = _save_message(msg.model_dump())
+    if _OBSERVABILITY_ENABLED:
+        notify_message_sent(to=msg.to, msg_type=msg.type, body_preview=msg.body)
+    return {"ok": True, "message_id": msg_id}
 
 
 @router.get("/pending")
@@ -123,6 +139,8 @@ async def agent_pending(
     ids = [m["id"] for m in messages]
     for mid in ids:
         _ack_message(mid)
+    if _OBSERVABILITY_ENABLED and messages:
+        notify_message_pending(target)
     return {"messages": messages, "count": len(messages)}
 
 

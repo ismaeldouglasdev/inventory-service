@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 
 import re
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,7 +53,7 @@ from app.api.v1.onboarding import router as onboarding_router
 from app.api.v1.agent_bridge import router as agent_bridge_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
-from app.services.event_processor import EventStoreProcessor
+# from app.services.event_processor import EventStoreProcessor
 from app.services.store_sync import StoreSync
 from app.services.circuit_breaker import CircuitBreaker
 from app.utils.logging import setup_logging
@@ -66,7 +67,7 @@ logger = logging.getLogger(__name__)
 # ── Globals ──────────────────────────────────────────────────────────────
 registry = AdapterRegistry()
 cdc_agent = CDCAgent(poll_interval=settings.cdc_poll_interval)
-event_processor = EventStoreProcessor(registry, poll_interval=5.0)
+# event_processor = EventStoreProcessor(registry, poll_interval=5.0)
 circuit_breaker = CircuitBreaker()
 
 
@@ -124,9 +125,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _set_store_sync_ref(store_sync)
     logger.info("StoreSync service registered")
 
-    # ── Start EventStore Processor ──────────────────────────────────
-    processor_task = asyncio.create_task(event_processor.run_forever())
-    logger.info("EventStore Processor started (poll every %.1fs)", event_processor.poll_interval)
+    processor_task = None
+    logger.info("EventStore Processor disabled")
 
     yield
 
@@ -141,12 +141,12 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         except asyncio.CancelledError:
             pass
 
-    event_processor.stop()
-    processor_task.cancel()
-    try:
-        await processor_task
-    except asyncio.CancelledError:
-        pass
+    if processor_task is not None:
+        processor_task.cancel()
+        try:
+            await processor_task
+        except asyncio.CancelledError:
+            pass
 
     logger.info("Shutdown complete")
 
@@ -239,3 +239,14 @@ app.include_router(store_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")
 app.include_router(onboarding_router, prefix="/v1")
 app.include_router(agent_bridge_router, prefix="/v1")
+
+# ── APK download ──────────────────────────────────────────────────────────
+APK_PATH = Path(__file__).resolve().parent.parent / "static" / "app-debug.apk"
+
+
+@app.get("/app-debug.apk", include_in_schema=False)
+async def download_apk():
+    if APK_PATH.exists():
+        from fastapi.responses import FileResponse
+        return FileResponse(str(APK_PATH), media_type="application/vnd.android.package-archive", filename="app-debug.apk")
+    return PlainTextResponse("APK not found", status_code=404)

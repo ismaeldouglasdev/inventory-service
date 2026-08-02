@@ -135,6 +135,33 @@ queue_depth = Gauge(
     labelnames=["queue"],
 )
 
+# ── Agent Communication Metrics ───────────────────────────────────────────
+
+agent_messages_total = Counter(
+    "inventory_agent_messages_total",
+    "Total agent messages by direction and type",
+    labelnames=["direction", "type"],  # direction: sent, received; type: message, response, status, error
+)
+
+agent_messages_pending = Gauge(
+    "inventory_agent_messages_pending",
+    "Current number of pending (unread) messages by target",
+    labelnames=["target"],
+)
+
+agent_bridge_status = Gauge(
+    "inventory_agent_bridge_status",
+    "Agent bridge status per agent (1=online, 0=offline)",
+    labelnames=["agent"],
+)
+
+agent_activity_timestamp = Gauge(
+    "inventory_agent_activity_timestamp",
+    "Last activity timestamp (unix epoch) per agent",
+    labelnames=["agent"],
+)
+
+
 # ── Helper ────────────────────────────────────────────────────────────────
 
 CB_STATE_MAP = {

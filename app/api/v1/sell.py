@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.adapters.registry import AdapterRegistry
 from app.services.circuit_breaker import CircuitBreaker
 from app.services.sell_pipeline import SellPipeline
+from app.utils.security import verify_api_key, rate_limit_write
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class CancelRequest(BaseModel):
 # ── Endpoints ──────────────────────────────────────────────────────────
 
 
-@router.post("/reserve")
+@router.post("/reserve", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def reserve(body: ReserveRequest) -> dict[str, Any]:
     """Reserve stock for an order."""
     pipeline = _get_pipeline()
@@ -86,7 +87,7 @@ async def reserve(body: ReserveRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.post("/confirm")
+@router.post("/confirm", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def confirm(body: ConfirmRequest) -> dict[str, Any]:
     """Confirm a reservation (OSPOS processed the sale)."""
     pipeline = _get_pipeline()
@@ -99,7 +100,7 @@ async def confirm(body: ConfirmRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-@router.post("/commit")
+@router.post("/commit", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def commit(reservation_id: int = Query(..., ge=1)) -> dict[str, Any]:
     """Mark a reservation as fully committed (channel propagated)."""
     pipeline = _get_pipeline()
@@ -109,7 +110,7 @@ async def commit(reservation_id: int = Query(..., ge=1)) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-@router.post("/cancel")
+@router.post("/cancel", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def cancel(body: CancelRequest) -> dict[str, Any]:
     """Cancel a reservation and restore stock."""
     pipeline = _get_pipeline()
@@ -122,7 +123,7 @@ async def cancel(body: CancelRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-@router.post("/sell")
+@router.post("/sell", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def sell(body: ReserveRequest) -> dict[str, Any]:
     """Full sell flow: reserve → confirm → propagate → commit."""
     pipeline = _get_pipeline()
@@ -140,7 +141,7 @@ async def sell(body: ReserveRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.get("/reservations/{reservation_id}")
+@router.get("/reservations/{reservation_id}", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def get_reservation(reservation_id: int) -> dict[str, Any]:
     """Get a single reservation."""
     pipeline = _get_pipeline()
@@ -150,7 +151,7 @@ async def get_reservation(reservation_id: int) -> dict[str, Any]:
     return result
 
 
-@router.get("/reservations")
+@router.get("/reservations", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def list_reservations(
     sku: str | None = Query(None),
     state: str | None = Query(None, pattern=r"^(reserved|confirmed|committed|cancelled)$"),

@@ -1,0 +1,10 @@
+from fastapi.responses import FileResponse
+import os
+_apk_path = os.path.join(os.path.dirname(__file__), "static", "app-debug.apk")
+
+@app.get("/app-debug.apk", include_in_schema=False)
+async def download_apk():
+    if os.path.exists(_apk_path):
+        return FileResponse(_apk_path, media_type="application/vnd.android.package-archive", filename="app-debug.apk")
+    return PlainTextResponse("APK not found", status_code=404)
+

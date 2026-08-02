@@ -19,6 +19,7 @@ from app.database import get_session
 from app.models.store_product import StoreProduct
 from app.services.circuit_breaker import CircuitBreaker
 from app.utils.metrics import generate_metrics, db_query_duration
+from app.utils.security import verify_api_key, rate_limit_admin
 
 # ── Injected references (set by main.py during lifespan) ────────────────
 _registry: AdapterRegistry | None = None
@@ -77,13 +78,13 @@ class AdminProductsResponse(BaseModel):
 # ── Endpoints ────────────────────────────────────────────────────────────
 
 
-@router.get("/metrics")
+@router.get("/metrics", dependencies=[Depends(verify_api_key), Depends(rate_limit_admin)])
 async def get_metrics():
     """Prometheus-formatted metrics for scraping."""
     return PlainTextResponse(generate_metrics().decode(), media_type="text/plain")
 
 
-@router.get("/stats", response_model=AdminStats)
+@router.get("/stats", response_model=AdminStats, dependencies=[Depends(verify_api_key), Depends(rate_limit_admin)])
 async def get_admin_stats(session: AsyncSession = Depends(get_session)):
     """Store statistics for the admin dashboard."""
     # Product counts
@@ -135,7 +136,7 @@ async def get_admin_stats(session: AsyncSession = Depends(get_session)):
     )
 
 
-@router.get("/products", response_model=AdminProductsResponse)
+@router.get("/products", response_model=AdminProductsResponse, dependencies=[Depends(verify_api_key), Depends(rate_limit_admin)])
 async def list_admin_products(
     page: int = Query(1, ge=1, le=10000),
     per_page: int = Query(50, ge=1, le=200),
@@ -203,7 +204,7 @@ class ImageMapRequest(BaseModel):
     item_id: int
 
 
-@router.post("/images/map")
+@router.post("/images/map", dependencies=[Depends(verify_api_key), Depends(rate_limit_admin)])
 async def map_product_image(
     req: ImageMapRequest,
     session: AsyncSession = Depends(get_session),

@@ -26,6 +26,7 @@ from sqlalchemy.orm import joinedload
 from app.database import get_session
 from app.models.store_product import StoreProduct
 from app.services.store_sync import StoreSync
+from app.utils.security import verify_api_key, rate_limit_store, rate_limit_write
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def _normalize_cat(name: str) -> str:
 # ── Endpoints ────────────────────────────────────────────────────────────
 
 
-@router.get("/products", response_model=StoreProductsResponse)
+@router.get("/products", response_model=StoreProductsResponse, dependencies=[Depends(rate_limit_store)])
 async def list_store_products(
     search: Optional[str] = Query(None, min_length=1, max_length=100),
     category: Optional[str] = Query(None, min_length=1, max_length=100),
@@ -173,7 +174,7 @@ async def list_store_products(
     )
 
 
-@router.get("/products/{product_id}", response_model=StoreProductOut)
+@router.get("/products/{product_id}", response_model=StoreProductOut, dependencies=[Depends(rate_limit_store)])
 async def get_store_product(
     product_id: int,
     session: AsyncSession = Depends(get_session),
@@ -191,7 +192,7 @@ async def get_store_product(
     return StoreProductOut.model_validate(product)
 
 
-@router.get("/categories", response_model=list[StoreCategory])
+@router.get("/categories", response_model=list[StoreCategory], dependencies=[Depends(rate_limit_store)])
 async def list_categories(
     normalized: bool = Query(False),
     session: AsyncSession = Depends(get_session),
@@ -257,7 +258,7 @@ async def serve_product_image(filename: str) -> Any:
     return FileResponse(str(filepath), media_type=media_type)
 
 
-@router.post("/products/{product_id}/image")
+@router.post("/products/{product_id}/image", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def upload_product_image(
     product_id: int,
     file: UploadFile = File(...),
@@ -527,3 +528,25 @@ async def get_last_scan() -> dict[str, Any]:
     if not _last_scan:
         raise HTTPException(status_code=404, detail="No scan registered yet")
     return _last_scan
+
+
+class ClientLogEntry(BaseModel):
+    level: str = "error"
+    message: str
+    screen: str = ""
+    device: str = ""
+    timestamp: str = ""
+
+
+@router.post("/log")
+async def client_log(entry: ClientLogEntry) -> dict[str, str]:
+    """Receive error logs from the Android app."""
+    logger.warning(
+        "[APP:%s] [%s] %s | device=%s screen=%s",
+        entry.level.upper(),
+        entry.timestamp or "?",
+        entry.message,
+        entry.device,
+        entry.screen,
+    )
+    return {"status": "logged"}

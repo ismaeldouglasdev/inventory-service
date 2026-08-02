@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-4o"
     ai_max_images: int = 4
 
+    # ── Security ───────────────────────────────────────────────────────
+    api_key: str = ""  # If set, requires X-API-Key header on sensitive endpoints
+    rate_limit_store: int = 60   # requests/min for store endpoints
+    rate_limit_write: int = 10   # requests/min for write endpoints
+    rate_limit_admin: int = 20   # requests/min for admin endpoints
+
     # ── CDC Agent ─────────────────────────────────────────────────────
     cdc_enabled: bool = True
     cdc_poll_interval: int = 30  # seconds

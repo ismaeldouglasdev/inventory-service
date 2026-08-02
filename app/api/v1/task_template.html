@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>__TITLE__ - Task Detail</title>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#e6edf3;--text-dim:#8b949e;--green:#3fb950;--blue:#58a6ff;--yellow:#d29922;--red:#f85149}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);padding:16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px}
+.nav{display:flex;gap:4px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.nav a{padding:6px 14px;border-radius:6px;font-size:13px;text-decoration:none;color:var(--text-dim)}
+.nav a:hover{background:var(--surface);color:var(--text)}
+.nav a.active{background:var(--blue);color:#fff}
+.bar{height:10px;background:var(--bg);border-radius:5px;overflow:hidden;margin:8px 0}
+.bar-fill{height:100%;border-radius:5px;transition:width .5s}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px}
+.tag.high{background:rgba(248,81,73,0.15);color:var(--red)}
+.tag.medium{background:rgba(210,153,34,0.15);color:var(--yellow)}
+.tag.low{background:rgba(63,185,80,0.15);color:var(--green)}
+.chat-input{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;outline:none}
+.chat-input:focus{border-color:var(--blue)}
+.cm{display:inline-block;padding:4px 10px;background:rgba(0,0,0,0.2);border-radius:4px;font-size:12px;margin:2px}
+</style></head><body>
+<div class="nav">
+<a href="/v1/observability/dashboard">Dashboard</a>
+<a href="/v1/observability/workspace">Workspace</a>
+<a href="/v1/observability/coordinator">Coordenacao</a>
+</div>
+<div class="card">
+<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">
+<h1 style="font-size:20px;flex:1">__STATUS_ICON__ __TITLE__</h1>
+<span class="tag __PRIORITY__">__PRIORITY_ICON__ __PRIORITY__</span></div>
+<div style="margin-top:8px;font-size:13px;color:var(--text-dim);display:flex;flex-wrap:wrap;gap:16px">
+<span>&#127919; __TARGET__</span>
+<span>&#128100; __SOURCE__</span>
+<span id="elapsed-timer">&#9201; __ELAPSED__</span></div>
+__DESC__
+<div style="margin-top:12px">
+<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+<span>__STATUS_ICON__ __STATUS__</span>
+<span id="progress-pct">__PROGRESS__%</span></div>
+<div class="bar"><div class="bar-fill" id="progress-bar" style="width:__PROGRESS__%;background:__BAR_COLOR__"></div></div></div>
+<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">
+<span class="cm">&#128197; Criado: __CREATED__</span>
+__COMPLETED__
+<span class="cm">&#129302; Modelo: __MODEL__</span>
+<span class="cm">&#128285; Tokens in: __TOKENS_IN__</span>
+<span class="cm">&#128283; Tokens out: __TOKENS_OUT__</span>
+<span class="cm">&#128176; Total: __TOKENS_TOTAL__</span>
+</div></div>
+__STEPS__
+__ACTIVITY__
+<div class="card">
+<h3>&#128172; Falar sobre esta task</h3>
+<div style="display:flex;gap:8px;margin-top:8px">
+<input class="chat-input" id="chat-input" placeholder="Digite instrucoes para os agentes..." onkeydown="if(event.key==='Enter')sendChat()">
+<button onclick="sendChat()" style="padding:8px 16px;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer">Enviar</button></div>
+<div id="chat-status" style="font-size:12px;color:var(--green);margin-top:4px"></div></div>
+<script>
+var TASK_ID = "__TASK_ID__";
+var CREATED = __CREATED_TS__;
+if (CREATED > 0) {
+  setInterval(function() {
+    var n = Math.floor(Date.now()/1000), e = n - CREATED, h = Math.floor(e/3600), m = Math.floor((e%3600)/60), s = e%60;
+    document.getElementById("elapsed-timer").textContent = "\u23f1 " + (h?h+"h ":"") + m+"m "+s+"s";
+  }, 1000);
+}
+function sendChat() {
+  var inp = document.getElementById("chat-input"), msg = inp.value.trim();
+  if (!msg) return; inp.value = "";
+  fetch("/v1/swarm/room/geral/message", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sender:"sisyphus",body:"[Task "+TASK_ID.slice(0,8)+"] "+msg})});
+  fetch("/v1/swarm/activity", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent:"sisyphus",action:"instruction",message:msg,task_id:TASK_ID})});
+  document.getElementById("chat-status").textContent = "Enviado para #geral!";
+  setTimeout(function(){document.getElementById("chat-status").textContent="";},3000);
+}
+</script></body></html>
