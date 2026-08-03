@@ -6,7 +6,7 @@ com filtros de estoque positivo e presença de imagem.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
@@ -34,12 +34,12 @@ class StoreProduct(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False,
-        default=datetime.now,
+        default=datetime.now(timezone.utc),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False,
-        default=datetime.now,
-        onupdate=datetime.now,
+        default=datetime.now(timezone.utc),
+        onupdate=datetime.now(timezone.utc),
     )
 
     def __repr__(self) -> str:

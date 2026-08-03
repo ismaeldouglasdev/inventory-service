@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # ── FastAPI ────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: str = '["http://localhost:5173","http://localhost:3000"]'
+    cors_origins: str = '["http://localhost:5173","http://localhost:3000","http://localhost:8080"]'
     log_level: str = "INFO"
     log_format: str = "text"  # "json" or "text"
 
@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
 
     # ── WooCommerce ────────────────────────────────────────────────────
-    wood_commerce_url: str = ""
-    wood_commerce_consumer_key: str = ""
-    wood_commerce_consumer_secret: str = ""
+    woocommerce_url: str = ""
+    woocommerce_consumer_key: str = ""
+    woocommerce_consumer_secret: str = ""
 
     # ── Mercado Livre ─────────────────────────────────────────────────
     ml_client_id: str = ""

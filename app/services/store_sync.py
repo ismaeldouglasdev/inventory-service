@@ -277,10 +277,10 @@ class StoreSync:
             self._stats["skipped"] += 1
             return
 
-        # Determine store_visibility
-        store_visible = has_image and row.stock > 0
-
         clean_name = _clean_product_name(row.name)
+
+        # store_visible requires BOTH stock > 0 AND image present
+        store_visible = row.stock > 0 and has_image
 
         # Check if product already exists (by ospos_id)
         result = await session.execute(
@@ -299,15 +299,9 @@ class StoreSync:
             existing.stock = row.stock
             existing.sku = row.sku
             existing.store_visible = store_visible
+            existing.image_url = image_url
             existing.last_sync_at = now
             existing.updated_at = now
-
-            # Only update image_url if we have one (don't overwrite with None)
-            if has_image:
-                existing.image_url = image_url
-            elif existing.image_url is None and only_with_images:
-                # Product lost its image and we're in strict mode
-                existing.store_visible = False
 
             self._stats["updated"] += 1
         else:

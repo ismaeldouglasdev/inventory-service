@@ -356,6 +356,67 @@ async def upload_product_image(
     }
 
 
+# ── Link existing image ───────────────────────────────────────────────────
+
+
+class LinkImageRequest(BaseModel):
+    filename: str
+
+
+@router.post("/products/{product_id}/image/link", status_code=200)
+async def link_existing_image(
+    product_id: int,
+    body: LinkImageRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Link an already-uploaded image file to a product.
+
+    The file must already exist in the images directory.  Multiple
+    images can be linked to the same product — the last one wins.
+    """
+    filename = body.filename.strip()
+    src = IMAGE_DIR / filename
+
+    if not src.exists():
+        raise HTTPException(status_code=404, detail=f"Image file not found: {filename}")
+
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Invalid extension: {ext}")
+
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # Copy to convention: product_{id}{ext} (keep original for re-linking)
+    dest_name = f"product_{product_id}{ext}"
+    dest = IMAGE_DIR / dest_name
+
+    import shutil
+    shutil.copy2(src, dest)
+
+    image_url = f"/v1/store/images/{dest_name}"
+    product.image_url = image_url
+    product.updated_at = __import__("datetime").datetime.now(__import__("zoneinfo").ZoneInfo("UTC"))
+
+    if product.stock > 0:
+        product.store_visible = True
+
+    await session.commit()
+
+    logger.info("Image linked for product %d: %s", product_id, dest_name)
+
+    return {
+        "success": True,
+        "filename": dest_name,
+        "image_url": image_url,
+        "product_id": product_id,
+    }
+
+
 # ── Sync endpoint ────────────────────────────────────────────────────────
 
 

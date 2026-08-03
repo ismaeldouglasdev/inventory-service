@@ -79,12 +79,12 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _set_start_time()
 
     # ── Adapter registry ────────────────────────────────────────────
-    if settings.wood_commerce_url and settings.wood_commerce_consumer_key:
+    if settings.woocommerce_url and settings.woocommerce_consumer_key:
         wc_adapter = WooCommerceAdapter()
         registry.register(wc_adapter)
         logger.info("WooCommerce adapter registered")
     else:
-        logger.info("WooCommerce adapter skipped — WOOD_COMMERCE_URL or WOOD_COMMERCE_CONSUMER_KEY not set")
+        logger.info("WooCommerce adapter skipped — WOOCOMMERCE_URL or WOOCOMMERCE_CONSUMER_KEY not set")
 
     if settings.shopee_partner_id and settings.shopee_api_key:
         shopee_adapter = ShopeeAdapter()
