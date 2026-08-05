@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+import grp
 import os
 import shutil
 from pathlib import Path
@@ -382,9 +383,11 @@ async def upload_product_image(
             # Group-writable so both OSPOS (www-data) and the service (ismaiel)
             # can overwrite it later.  The group must be www-data: chmod 664
             # alone is not enough when the file is created as ismael:ismael.
+            # NOTE: there is no os.chgrp() in Python — use os.chown() with
+            # uid=-1 to keep the owner unchanged.
             try:
+                os.chown(dest, -1, grp.getgrnam("www-data").gr_gid)
                 os.chmod(dest, 0o664)
-                os.chgrp(dest, "www-data")
             except OSError:
                 pass
 
