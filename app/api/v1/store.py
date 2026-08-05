@@ -380,9 +380,11 @@ async def upload_product_image(
                 dest.unlink()
             shutil.copy2(filepath, dest)
             # Group-writable so both OSPOS (www-data) and the service (ismaiel)
-            # can overwrite it later.
+            # can overwrite it later.  The group must be www-data: chmod 664
+            # alone is not enough when the file is created as ismael:ismael.
             try:
                 os.chmod(dest, 0o664)
+                os.chgrp(dest, "www-data")
             except OSError:
                 pass
 
