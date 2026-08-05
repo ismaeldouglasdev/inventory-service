@@ -587,7 +587,13 @@ async def register_scan(
 async def get_last_scan() -> dict[str, Any]:
     """Get the last registered barcode scan (phone polls this)."""
     if not _last_scan:
-        raise HTTPException(status_code=404, detail="No scan registered yet")
+        return {
+            "type": "last",
+            "barcode": "",
+            "product_id": None,
+            "product_name": None,
+            "found": False,
+        }
     return _last_scan
 
 
