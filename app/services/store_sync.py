@@ -40,6 +40,8 @@ class OSPOSRow:
     sku: str
     stock: int
     pic_filename: Optional[str]
+    last_modified: Optional[datetime]
+    has_image: bool = False
 
 
 # ── Normalisation helpers (copied from store.py) ─────────────────────────
@@ -77,10 +79,11 @@ class StoreSync:
     """Syncs products from OSPOS MySQL into the local store_products table."""
 
     PRODUCT_FIELDS = (
-        "item_id, name, description, unit_price, category, "
-        "COALESCE(NULLIF(item_number, ''), NULLIF(item_number, 'NULL'), CAST(item_id AS CHAR)) AS sku, "
-        "CAST(receiving_quantity AS SIGNED) AS stock, "
-        "COALESCE(NULLIF(pic_filename, ''), NULLIF(pic_filename, 'NULL'), NULL) AS pic_filename"
+        "items.item_id, items.name, items.description, items.unit_price, items.category, "
+        "COALESCE(NULLIF(items.item_number, ''), NULLIF(items.item_number, 'NULL'), CAST(items.item_id AS CHAR)) AS sku, "
+        "COALESCE((SELECT quantity FROM ospos_item_quantities q WHERE q.item_id = items.item_id AND q.location_id = 1), 0) AS stock, "
+        "COALESCE(NULLIF(items.pic_filename, ''), NULLIF(items.pic_filename, 'NULL'), NULL) AS pic_filename, "
+        "items.last_modified"
     )
 
     def __init__(self) -> None:
@@ -120,6 +123,8 @@ class StoreSync:
 
             await session.commit()
 
+        await self._dedupe_store()
+
         logger.info(
             "StoreSync: done — %d created, %d updated, %d skipped, %d errors",
             self._stats["created"],
@@ -145,23 +150,26 @@ class StoreSync:
         async with async_session_factory() as session:
             result = await session.execute(
                 select(StoreProduct.ospos_id)
-                .order_by(StoreProduct.ospos_id.desc())
-                .limit(1)
             )
-            last_row = result.scalar_one_or_none()
-            last_id = last_row or 0
+            existing_ids = {row[0] for row in result.all()}
 
+        last_id = max(existing_ids, default=0)
+
+        # Fetch items that are NEWER than the last synced id OR missing from
+        # store_products entirely (e.g. products created before the sync
+        # system existed, with item_id below the max already synced).
         rows = await self._fetch_ospos_items(
             min_stock=min_stock,
             since_id=last_id,
+            exclude_ids=existing_ids,
         )
         if not rows:
             logger.info("StoreSync (delta): no new/changed products since OSPOS id %d", last_id)
             return self._stats
 
         logger.info(
-            "StoreSync (delta): fetched %d products since OSPOS id %d",
-            len(rows), last_id,
+            "StoreSync (delta): fetched %d products (new or missing)",
+            len(rows),
         )
 
         async with async_session_factory() as session:
@@ -174,6 +182,8 @@ class StoreSync:
 
             await session.commit()
 
+        await self._dedupe_store()
+
         logger.info(
             "StoreSync (delta): done — %d created, %d updated, %d skipped, %d errors",
             self._stats["created"],
@@ -183,16 +193,55 @@ class StoreSync:
         )
         return self._stats
 
+    # ── Duplicate (barcode) resolution ───────────────────────────────
+
+    async def _dedupe_store(self) -> None:
+        """Ensure only ONE product per SKU is store_visible.
+
+        When two or more store products share the same SKU (barcode),
+        keep visible only the best candidate (most recent / most data).
+        """
+        from app.services.duplicate_rule import group_duplicates, pick_best_duplicate
+
+        async with async_session_factory() as session:
+            result = await session.execute(select(StoreProduct))
+            products = result.scalars().all()
+
+            groups = group_duplicates(products)
+            if not groups:
+                return
+
+            visible_fixed = 0
+            for sku, items in groups.items():
+                best = pick_best_duplicate(items)
+                if best is None:
+                    continue
+                for p in items:
+                    should_be = p is best and p.stock > 0 and bool(p.image_url)
+                    if p.store_visible != should_be:
+                        p.store_visible = should_be
+                        visible_fixed += 1
+
+            await session.commit()
+            if visible_fixed:
+                logger.info("StoreSync (dedupe): adjusted visibility for %d product(s)", visible_fixed)
+
     # ── OSPOS MySQL access ───────────────────────────────────────────
 
     async def _fetch_ospos_items(
         self,
         min_stock: int = 0,
         since_id: int = 0,
+        exclude_ids: set[int] | None = None,
     ) -> list[OSPOSRow]:
         """Fetch products from OSPOS MySQL.
 
         Only returns active (deleted=0) products with stock >= min_stock.
+
+        With ``since_id`` set, returns items with ``item_id > since_id``.
+        With ``exclude_ids`` set, also returns items whose ``item_id`` is
+        NOT already in the local ``store_products`` table (catches products
+        created before the sync existed, whose id is below the max synced id).
         """
         import aiomysql  # type: ignore[import-untyped]
 
@@ -210,20 +259,46 @@ class StoreSync:
         try:
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
-                    where_parts = ["deleted = 0", "receiving_quantity >= %s"]
+                    where_parts = [
+                        "items.deleted = 0",
+                        "COALESCE((SELECT quantity FROM ospos_item_quantities q WHERE q.item_id = items.item_id AND q.location_id = 1), 0) >= %s",
+                    ]
                     params: list[Any] = [min_stock]
 
-                    if since_id > 0:
-                        where_parts.append("item_id > %s")
+                    if exclude_ids is not None:
+                        # Fetch items that are NEW (id > since_id) OR MISSING
+                        # from store_products entirely.
+                        exclude_list = sorted(exclude_ids)
+                        # Chunked NOT IN() to keep the query size manageable
+                        chunk_size = 1000
+                        chunks = [
+                            exclude_list[i:i + chunk_size]
+                            for i in range(0, len(exclude_list), chunk_size)
+                        ]
+                        not_in_sql = " AND ".join(
+                            "items.item_id NOT IN (" + ",".join(["%s"] * len(c)) + ")"
+                            for c in chunks
+                        )
+
+                        if since_id > 0:
+                            # Placeholders order: since_id first, then chunk ids.
+                            where_parts.append(f"(items.item_id > %s OR ({not_in_sql}))")
+                            params.append(since_id)
+                        else:
+                            where_parts.append(f"({not_in_sql})")
+                        for c in chunks:
+                            params.extend(c)
+                    elif since_id > 0:
+                        where_parts.append("items.item_id > %s")
                         params.append(since_id)
 
                     where_sql = " AND ".join(where_parts)
 
                     sql = (
                         f"SELECT {self.PRODUCT_FIELDS} "
-                        f"FROM ospos_items "
+                        f"FROM ospos_items AS items "
                         f"WHERE {where_sql} "
-                        f"ORDER BY item_id ASC"
+                        f"ORDER BY items.item_id ASC"
                     )
                     await cur.execute(sql, tuple(params))
                     fetched = await cur.fetchall()
@@ -236,8 +311,11 @@ class StoreSync:
                             unit_price=float(row[3]),
                             category=row[4],
                             sku=row[5],
-                            stock=row[6],
+                            # MySQL quantity is DECIMAL — SQLite refuses to bind
+                            # Decimal, so coerce to int here (whole units).
+                            stock=int(row[6] or 0),
                             pic_filename=row[7],
+                            last_modified=row[8],
                         ))
         finally:
             pool.close()
@@ -272,6 +350,38 @@ class StoreSync:
         image_url = self._build_image_url(row.pic_filename)
         has_image = image_url is not None
 
+        # Check if product already exists (by ospos_id) — needed before the
+        # image fallback so we can preserve locally-uploaded images across syncs.
+        result = await session.execute(
+            select(StoreProduct).where(StoreProduct.ospos_id == row.item_id)
+        )
+        existing = result.scalar_one_or_none()
+
+        # If OSPOS has no pic_filename, look for a locally-uploaded image:
+        #   1. an image_url already stored on the local row (if file exists), or
+        #   2. a file named product_{local_id}.{ext} or product_{ospos_id}.{ext}
+        #      on disk (the naming used by the store/capture upload endpoint).
+        # This prevents the sync from wiping uploads whose source is not in OSPOS.
+        if image_url is None:
+            if existing is not None and existing.image_url:
+                local_url = existing.image_url
+                fname = local_url.rsplit("/", 1)[-1]
+                if (IMAGE_DIR / fname).exists():
+                    image_url = local_url
+                    has_image = True
+            if image_url is None:
+                for pid in {existing.id if existing else None, row.item_id}:
+                    if pid is None:
+                        continue
+                    for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                        candidate = IMAGE_DIR / f"product_{pid}{ext}"
+                        if candidate.exists():
+                            image_url = f"/v1/store/images/{candidate.name}"
+                            has_image = True
+                            break
+                    if has_image:
+                        break
+
         # If only_with_images and no image → skip
         if only_with_images and not has_image:
             self._stats["skipped"] += 1
@@ -281,12 +391,6 @@ class StoreSync:
 
         # store_visible requires BOTH stock > 0 AND image present
         store_visible = row.stock > 0 and has_image
-
-        # Check if product already exists (by ospos_id)
-        result = await session.execute(
-            select(StoreProduct).where(StoreProduct.ospos_id == row.item_id)
-        )
-        existing = result.scalar_one_or_none()
 
         now = datetime.now(timezone.utc)
 
@@ -300,6 +404,7 @@ class StoreSync:
             existing.sku = row.sku
             existing.store_visible = store_visible
             existing.image_url = image_url
+            existing.last_modified = row.last_modified
             existing.last_sync_at = now
             existing.updated_at = now
 
@@ -316,6 +421,7 @@ class StoreSync:
                 stock=row.stock,
                 image_url=image_url,
                 store_visible=store_visible,
+                last_modified=row.last_modified,
                 last_sync_at=now,
                 created_at=now,
                 updated_at=now,

@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     ospos_db_user: str = "root"
     ospos_db_pass: str = ""
     ospos_api_url: str = ""  # REST fallback (optional)
+    ospos_uploads_dir: str = "/var/www/html/pos/public/uploads/item_pics"
 
     # ── AI / LLM ────────────────────────────────────────────────────────
     ai_api_url: str = ""

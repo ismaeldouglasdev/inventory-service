@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -23,6 +24,7 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.config import settings
 from app.database import get_session
 from app.models.store_product import StoreProduct
 from app.services.store_sync import StoreSync
@@ -348,11 +350,58 @@ async def upload_product_image(
 
     logger.info("Image uploaded for product %d: %s (%d bytes)", product_id, filename, len(contents))
 
+    # ── Write-back to OSPOS (thumbnail + pic_filename) ──────────────
+    # Mirror the image into the OSPOS uploads dir under its item_id
+    # naming (e.g. 3913.png) and update ospos_items.pic_filename so the
+    # OSPOS item grid / sale screens show the photo too.  If the mapped
+    # OSPOS item is deleted, the photo is redirected to the active item
+    # carrying the same barcode instead.
+    from app.services import ospos_client
+
+    ospos_written = None
+    try:
+        target_id = await ospos_client.resolve_photo_target(product.ospos_id, product.sku)
+        if not target_id:
+            logger.error(
+                "OSPOS write-back skipped for product %d: no active item "
+                "(mapped item_id=%s barcode=%s)",
+                product_id, product.ospos_id, product.sku,
+            )
+        else:
+            ospos_fname = f"{target_id}{ext}"
+            ospos_uploads = Path(settings.ospos_uploads_dir)
+            ospos_uploads.mkdir(parents=True, exist_ok=True)
+            dest = ospos_uploads / ospos_fname
+
+            # The dest may already exist owned by another user (e.g. www-data
+            # from an OSPOS UI upload).  Unlink first so the copy only needs
+            # write permission on the directory.
+            if dest.exists():
+                dest.unlink()
+            shutil.copy2(filepath, dest)
+            # Group-writable so both OSPOS (www-data) and the service (ismaiel)
+            # can overwrite it later.
+            try:
+                os.chmod(dest, 0o664)
+            except OSError:
+                pass
+
+            await ospos_client.set_pic_filename(target_id, ospos_fname)
+
+            ospos_written = ospos_fname
+            logger.info(
+                "OSPOS write-back: product %d → OSPOS item %d pic_filename=%s",
+                product_id, target_id, ospos_fname,
+            )
+    except Exception as exc:
+        logger.error("OSPOS write-back failed for product %d: %s", product_id, exc)
+
     return {
         "success": True,
         "filename": filename,
         "image_url": image_url,
         "background_removed": remove_bg,
+        "ospos_pic_filename": ospos_written,
     }
 
 
@@ -555,7 +604,23 @@ async def register_scan(
     result = await session.execute(
         select(StoreProduct).where(StoreProduct.sku == barcode)
     )
-    product = result.scalar_one_or_none()
+    matches = result.scalars().all()
+
+    # When the same barcode exists on multiple products (duplicate SKU),
+    # resolve to the best record.  Candidates whose OSPOS item is deleted
+    # are deprioritized so the photo/scan follows the live product.
+    if matches:
+        if len(matches) == 1:
+            product = matches[0]
+        else:
+            from app.services import ospos_client
+            deleted = await ospos_client.item_deleted_map([m.ospos_id for m in matches])
+            active = [m for m in matches if m.ospos_id in deleted and not deleted[m.ospos_id]]
+
+            from app.services.duplicate_rule import pick_best_duplicate
+            product = pick_best_duplicate(active or list(matches))
+    else:
+        product = None
 
     scan_data = {
         "barcode": barcode,
