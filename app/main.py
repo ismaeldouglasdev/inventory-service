@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.utils.metrics import (
     requests_total,
@@ -250,3 +251,8 @@ async def download_apk():
         from fastapi.responses import FileResponse
         return FileResponse(str(APK_PATH), media_type="application/vnd.android.package-archive", filename="app-debug.apk")
     return PlainTextResponse("APK not found", status_code=404)
+
+
+# ── Static files (mobile status page, etc.) ───────────────────────────────
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

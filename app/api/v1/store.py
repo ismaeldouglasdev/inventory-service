@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
@@ -41,6 +41,49 @@ IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+# ── Photo upload history (real-time feedback) ─────────────────────────────
+PHOTO_LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "photo_uploads.jsonl"
+
+
+def _log_photo_event(event: dict[str, Any]) -> None:
+    """Append one JSON line per photo upload (bounded tail read later)."""
+    import json
+    from datetime import datetime
+
+    event["ts"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        with open(PHOTO_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception as exc:  # pragma: no cover
+        logger.warning("photo event log append failed: %s", exc)
+
+
+def _recent_photos(limit: int = 8) -> list[dict[str, Any]]:
+    """Return the last ``limit`` photo upload events, newest first."""
+    import json
+
+    events: list[dict[str, Any]] = []
+    try:
+        with open(PHOTO_LOG_PATH, "r", encoding="utf-8") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 65536))
+            if f.tell() > 0:
+                f.readline()
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except FileNotFoundError:
+        return []
+    except OSError as exc:  # pragma: no cover
+        logger.warning("photo event log read failed: %s", exc)
+        return []
+    return list(reversed(events[-limit:]))
 
 # ── Global sync service reference ────────────────────────────────────────
 _store_sync: StoreSync | None = None
@@ -261,6 +304,90 @@ async def serve_product_image(filename: str) -> Any:
     return FileResponse(str(filepath), media_type=media_type)
 
 
+@router.get("/ospos-item-images/{filename:path}")
+async def serve_ospos_item_image(filename: str) -> Any:
+    """Serve an item photo directly from the OSPOS uploads dir.
+
+    Lets another PC on the LAN pull photos written back to OSPOS
+    (``public/uploads/item_pics/{item_id}{ext}``) over HTTP.
+    """
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    filepath = Path(settings.ospos_uploads_dir) / filename
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    ext = filepath.suffix.lower()
+    media_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    return FileResponse(str(filepath), media_type=media_types.get(ext, "application/octet-stream"))
+
+
+@router.get("/sync-total", response_model_exclude_none=True)
+async def sync_total(
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    include_deleted: bool = Query(False),
+    since: Optional[str] = Query(
+        None, description="YYYY-MM-DD HH:MM:SS — get only items with last_modified >= since"
+    ),
+    response: Response = None,
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Full product sync for another PC to consume.
+
+    Returns the entire OSPOS product catalog (paginated) with name, code,
+    prices, stock, photo filename, last_modified, etc. Use ``limit``/``offset``
+    to page through the whole catalog; read the ``X-Total-Count`` response
+    header to know the total.
+
+    The returned ``image_url`` points at ``/v1/store/ospos-item-images/{pic}``
+    so the consumer can download the photo over HTTP.
+
+    Light & stateless — no sync, no dedupe, no side effects.
+    """
+    from app.services import ospos_client
+
+    rows, total = await ospos_client.fetch_items_total(
+        limit=limit, offset=offset, include_deleted=include_deleted, since=since
+    )
+
+    items = []
+    for r in rows:
+        pic = r.get("pic_filename")
+        last_mod = r.get("last_modified")
+        if hasattr(last_mod, "isoformat"):
+            last_mod = last_mod.isoformat(timespec="seconds")
+        last_mod = str(last_mod) if last_mod else None
+        items.append({
+            "item_id": r["item_id"],
+            "sku": r["item_number"],
+            "name": r["name"],
+            "category": r["category"],
+            "description": r["description"],
+            "cost_price": float(r["cost_price"]) if r["cost_price"] is not None else None,
+            "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            "stock": int(r["stock"]) if float(r["stock"] or 0) == int(float(r["stock"] or 0)) else float(r["stock"]),
+            "image_url": f"/v1/store/ospos-item-images/{pic}" if pic else None,
+            "pic_filename": pic,
+            "last_modified": last_mod,
+            "deleted": bool(r["deleted"]),
+        })
+
+    if response is not None:
+        response.headers["X-Total-Count"] = str(total)
+        response.headers["X-Limit"] = str(limit)
+        response.headers["X-Offset"] = str(offset)
+        response.headers["Content-Type"] = "application/json"
+    return items
+
+
 @router.post("/products/{product_id}/image", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def upload_product_image(
     product_id: int,
@@ -360,9 +487,11 @@ async def upload_product_image(
     from app.services import ospos_client
 
     ospos_written = None
+    writeback_error = None
     try:
         target_id = await ospos_client.resolve_photo_target(product.ospos_id, product.sku)
         if not target_id:
+            writeback_error = "no active OSPOS item (mapped item deleted)"
             logger.error(
                 "OSPOS write-back skipped for product %d: no active item "
                 "(mapped item_id=%s barcode=%s)",
@@ -399,7 +528,20 @@ async def upload_product_image(
                 product_id, target_id, ospos_fname,
             )
     except Exception as exc:
+        writeback_error = str(exc)
         logger.error("OSPOS write-back failed for product %d: %s", product_id, exc)
+
+    # ── Record + broadcast the photo event (real-time feedback) ──────────
+    event: dict[str, Any] = {
+        "product_id": product_id,
+        "product_name": product.name,
+        "ospos_item_id": target_id if ospos_written else None,
+        "pic_filename": ospos_written,
+        "status": "ok" if ospos_written else "failed",
+        "error": writeback_error,
+    }
+    _log_photo_event(event)
+    await _photo_notifier.broadcast({"type": "photo", **event})
 
     return {
         "success": True,
@@ -408,6 +550,52 @@ async def upload_product_image(
         "background_removed": remove_bg,
         "ospos_pic_filename": ospos_written,
     }
+
+
+# ── Photo upload status (real-time feedback) ──────────────────────────────
+
+
+@router.get("/photos/recent")
+async def recent_photo_uploads(
+    limit: int = Query(8, ge=1, le=50),
+) -> list[dict[str, Any]]:
+    """Last ``limit`` photo upload events, newest first.
+
+    Used by the OSPOS items screen (PC) and the mobile status page to
+    show, in near real time, that a photo captured by the Loja Capture
+    app was saved into the system (write-back to OSPOS done or failed).
+    """
+    return _recent_photos(limit=limit)
+
+
+@router.websocket("/photo/ws")
+async def photo_websocket(websocket: WebSocket) -> None:
+    """Real-time photo-upload notifications for the OSPOS items screen.
+
+    The PC browser connects here; whenever a photo is uploaded via the
+    Loja Capture app, the event is broadcast so the items grid can
+    refresh and show a toast immediately (no polling).
+    """
+    await _photo_notifier.connect(websocket)
+    try:
+        # Send the most recent event immediately on connect (feedback
+        # for uploads that already happened).
+        last = _recent_photos(limit=1)
+        if last:
+            await websocket.send_json({"type": "photo", "last": True, **last[0]})
+
+        # Keep connection alive — listen for client pings
+        while True:
+            try:
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except WebSocketDisconnect:
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await _photo_notifier.disconnect(websocket)
 
 
 # ── Link existing image ───────────────────────────────────────────────────
@@ -564,6 +752,9 @@ class ScanNotifier:
 
 
 _scan_notifier = ScanNotifier()
+
+# Same connection manager reused for photo-upload events (OSPOS PC screen).
+_photo_notifier = ScanNotifier()
 
 
 @router.websocket("/scan/ws")

@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # ── FastAPI ────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: str = '["http://localhost:5173","http://localhost:3000","http://localhost:8080"]'
+    cors_origins: str = '["http://localhost:5173","http://localhost:3000","http://localhost:8080","http://localhost","http://127.0.0.1","http://192.168.15.6"]'
     log_level: str = "INFO"
     log_format: str = "text"  # "json" or "text"
 

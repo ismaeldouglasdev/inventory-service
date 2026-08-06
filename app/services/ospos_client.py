@@ -8,7 +8,7 @@ Provides the write-back of product photos into OSPOS
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from app.config import settings
 
@@ -95,3 +95,62 @@ async def set_pic_filename(item_id: int, filename: str) -> None:
                 "UPDATE ospos_items SET pic_filename=%s WHERE item_id=%s",
                 (filename, item_id),
             )
+
+
+async def fetch_items_total(
+    limit: int = 1000,
+    offset: int = 0,
+    include_deleted: bool = False,
+    since: Optional[str] = None,
+) -> tuple[list[dict], int]:
+    """Read a page of product data directly from the OSPOS MySQL DB.
+
+    Used by ``GET /v1/store/sync-total`` so another PC can pull the full
+    catalog (names, prices, stock, photo filename, last_modified, ...) on
+    demand. Returns ``(rows, total_count_rows)``.
+
+    ``since`` (optional ``YYYY-MM-DD HH:MM:SS``) restricts to items whose
+    ``last_modified`` is newer; only items touched via the items form carry
+    ``last_modified``, so it is a best-effort delta, not a full change log.
+    """
+    pool = await _pool()
+    if include_deleted:
+        where = "WHERE (i.deleted = 0 OR i.deleted = 1)"
+    else:
+        where = "WHERE i.deleted = 0"
+
+    params: list[Any] = []
+    if since:
+        where += " AND (i.last_modified >= %s OR i.last_modified IS NULL)"
+        params.append(since)
+
+    rows: list[dict] = []
+    count = 0
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            query = (
+                "SELECT i.item_id, i.item_number, i.name, i.category, i.description, "
+                "i.cost_price, i.unit_price, i.pic_filename, i.last_modified, i.deleted, "
+                "COALESCE(q.total_qty, 0) AS stock "
+                "FROM ospos_items i "
+                "LEFT JOIN (SELECT item_id, SUM(quantity) AS total_qty "
+                "           FROM ospos_item_quantities GROUP BY item_id) q "
+                "ON q.item_id = i.item_id "
+                + where +
+                " ORDER BY i.item_id ASC "
+                "LIMIT %s, %s"
+            )
+            cur_params = list(params) + [offset, limit]  # MySQL LIMIT offset, count
+            await cur.execute(query, cur_params)
+            cols = [d[0] for d in cur.description]
+            async for row in cur:
+                rows.append(dict(zip(cols, row)))
+
+            # total count for the same (non-paged) filter
+            count_sql = (
+                "SELECT COUNT(*) FROM ospos_items i " + where
+            )
+            await cur.execute(count_sql, params)
+            count_row = await cur.fetchone()
+            count = count_row[0] if count_row else 0
+    return rows, count
