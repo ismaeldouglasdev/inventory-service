@@ -1,0 +1,280 @@
+{
+  "schema_version": 1,
+  "synced_at": "2026-08-07T12:05:08-0300",
+  "prod_url": "http://192.168.15.6:8000",
+  "catalog": {
+    "count": 10117,
+    "sha256": "9e17360ff1bbb8b3105aacc275a8a9f6082efffface0477dd19039ad59215a4f",
+    "changed": false
+  },
+  "metadata": {
+    "stats": {
+      "total_products": 10224,
+      "visible_products": 81,
+      "with_images": 151,
+      "in_stock": 2304,
+      "categories": 91,
+      "db_size_mb": 0.0,
+      "images_count": 0,
+      "images_size_mb": 0.0
+    },
+    "categories": [
+      {
+        "name": "UTILIDADES",
+        "count": 30
+      },
+      {
+        "name": "Geral",
+        "count": 11
+      },
+      {
+        "name": "BRINQUEDOS",
+        "count": 9
+      },
+      {
+        "name": "PAPELARIA",
+        "count": 5
+      },
+      {
+        "name": "COZINHA",
+        "count": 4
+      },
+      {
+        "name": "VIDROS",
+        "count": 3
+      },
+      {
+        "name": "JARDINAGEM",
+        "count": 3
+      },
+      {
+        "name": "ESCOLAR",
+        "count": 3
+      },
+      {
+        "name": "brinquedos",
+        "count": 2
+      },
+      {
+        "name": "ELETRÔNICOS",
+        "count": 2
+      },
+      {
+        "name": "ELETRONICOS",
+        "count": 2
+      },
+      {
+        "name": "escolar",
+        "count": 1
+      },
+      {
+        "name": "UTILIDADE",
+        "count": 1
+      },
+      {
+        "name": "PLASTICOS",
+        "count": 1
+      },
+      {
+        "name": "FESTA",
+        "count": 1
+      },
+      {
+        "name": "ELETRÔNICOS E ACESSÓRIOS",
+        "count": 1
+      },
+      {
+        "name": "BRINQUEDO",
+        "count": 1
+      },
+      {
+        "name": "BANHEIRO",
+        "count": 1
+      }
+    ],
+    "photos_recent": [
+      {
+        "product_id": 7752,
+        "product_name": "PUXA SACO EM RENDA CAPA DE LIQUIDIFICADOR",
+        "ospos_item_id": 7763,
+        "pic_filename": "7763.png",
+        "status": "ok",
+        "error": null,
+        "ts": "2026-08-07T11:47:57-03:00"
+      },
+      {
+        "product_id": 3447,
+        "product_name": "CORTINA DE PIA TECIDO 1,35X0,80M OXFORD",
+        "ospos_item_id": 3451,
+        "pic_filename": "3451.png",
+        "status": "ok",
+        "error": null,
+        "ts": "2026-08-07T11:12:11-03:00"
+      },
+      {
+        "product_id": 8493,
+        "product_name": "SQUEEZE COSTELAÇAO 700 ML",
+        "ospos_item_id": 8504,
+        "pic_filename": "8504.png",
+        "status": "ok",
+        "error": null,
+        "ts": "2026-08-06T15:12:35-03:00"
+      },
+      {
+        "product_id": 4957,
+        "product_name": "ISQUEIRO HIPER",
+        "ospos_item_id": 4965,
+        "pic_filename": "4965.png",
+        "status": "ok",
+        "error": null,
+        "ts": "2026-08-06T13:31:53-03:00"
+      },
+      {
+        "product_id": 6004,
+        "product_name": "MARCA TEXTO COLOR SPOTLINNER",
+        "ospos_item_id": 6013,
+        "pic_filename": "6013.png",
+        "status": "ok",
+        "error": null,
+        "ts": "2026-08-06T13:31:43-03:00"
+      },
+      {
+        "product_id": 5934,
+        "product_name": "LUVA TRICOTADA PRETA KALIPSO",
+        "ospos_item_id": 5943,
+        "pic_filename": "5943.png",
+        "status": "ok",
+        "error": null,
+        "ts": "2026-08-06T13:29:45-03:00"
+      },
+      {
+        "product_id": 9975,
+        "product_name": "BALDE 7L PRETO",
+        "ospos_item_id": 9994,
+        "pic_filename": "9994.png",
+        "status": "ok",
+        "error": null,
+        "ts": "2026-08-06T13:28:28-03:00"
+      },
+      {
+        "product_id": 5641,
+        "product_name": "LAPISEIRA 0,7",
+        "ospos_item_id": 5650,
+        "pic_filename": "5650.png",
+        "status": "ok",
+        "error": null,
+        "ts": "2026-08-06T13:26:39-03:00"
+      }
+    ]
+  },
+  "photos": {
+    "downloaded": 0,
+    "skipped": 102,
+    "failed": [],
+    "index_count": 102
+  },
+  "photo_index": {
+    "25.png": "ospos-item-images",
+    "89.png": "ospos-item-images",
+    "202.png": "ospos-item-images",
+    "291.png": "ospos-item-images",
+    "663.png": "ospos-item-images",
+    "664.png": "ospos-item-images",
+    "951.png": "ospos-item-images",
+    "965.jpg": "ospos-item-images",
+    "1118.png": "ospos-item-images",
+    "1302.png": "ospos-item-images",
+    "1371.png": "ospos-item-images",
+    "1422.jpg": "ospos-item-images",
+    "1485.png": "ospos-item-images",
+    "1499.png": "ospos-item-images",
+    "1510.png": "ospos-item-images",
+    "1550.png": "ospos-item-images",
+    "1552.png": "ospos-item-images",
+    "1565.jpg": "ospos-item-images",
+    "1587.jpg": "ospos-item-images",
+    "1590.jpg": "ospos-item-images",
+    "1595.jpg": "ospos-item-images",
+    "1596.jpg": "ospos-item-images",
+    "1598.jpg": "ospos-item-images",
+    "1604.png": "ospos-item-images",
+    "1605.jpg": "ospos-item-images",
+    "1614.png": "ospos-item-images",
+    "1637.png": "ospos-item-images",
+    "2016.png": "ospos-item-images",
+    "2138.png": "ospos-item-images",
+    "2235.png": "ospos-item-images",
+    "2248.jpg": "ospos-item-images",
+    "2353.png": "ospos-item-images",
+    "2495.png": "ospos-item-images",
+    "3251.png": "ospos-item-images",
+    "3294.png": "ospos-item-images",
+    "3299.png": "ospos-item-images",
+    "3333.png": "ospos-item-images",
+    "3451.png": "ospos-item-images",
+    "3625.png": "ospos-item-images",
+    "4357.png": "ospos-item-images",
+    "4387.png": "ospos-item-images",
+    "4743.png": "ospos-item-images",
+    "4965.png": "ospos-item-images",
+    "4974.png": "ospos-item-images",
+    "5073.png": "ospos-item-images",
+    "5074.png": "ospos-item-images",
+    "5134.png": "ospos-item-images",
+    "5650.png": "ospos-item-images",
+    "5701.png": "ospos-item-images",
+    "5870.png": "ospos-item-images",
+    "5943.png": "ospos-item-images",
+    "6013.png": "ospos-item-images",
+    "6071.png": "ospos-item-images",
+    "6195.png": "ospos-item-images",
+    "6259.png": "ospos-item-images",
+    "6261.png": "ospos-item-images",
+    "6464.png": "ospos-item-images",
+    "6550.png": "ospos-item-images",
+    "6567.png": "ospos-item-images",
+    "6622.png": "ospos-item-images",
+    "6623.png": "ospos-item-images",
+    "6646.png": "ospos-item-images",
+    "7763.png": "ospos-item-images",
+    "8040.png": "ospos-item-images",
+    "8272.png": "ospos-item-images",
+    "8288.png": "ospos-item-images",
+    "8504.png": "ospos-item-images",
+    "8547.png": "ospos-item-images",
+    "8553.png": "ospos-item-images",
+    "8560.png": "ospos-item-images",
+    "8564.png": "ospos-item-images",
+    "8574.png": "ospos-item-images",
+    "8898.png": "ospos-item-images",
+    "9267.png": "ospos-item-images",
+    "9435.png": "ospos-item-images",
+    "9463.png": "ospos-item-images",
+    "9485.jpg": "ospos-item-images",
+    "9500.png": "ospos-item-images",
+    "9727.png": "ospos-item-images",
+    "9818.png": "ospos-item-images",
+    "9869.png": "ospos-item-images",
+    "9883.png": "ospos-item-images",
+    "9919.png": "ospos-item-images",
+    "9935.png": "ospos-item-images",
+    "9965.png": "ospos-item-images",
+    "9976.png": "ospos-item-images",
+    "9994.png": "ospos-item-images",
+    "10045.png": "ospos-item-images",
+    "10095.png": "ospos-item-images",
+    "10113.png": "ospos-item-images",
+    "10120.png": "ospos-item-images",
+    "10162.png": "ospos-item-images",
+    "10190.png": "ospos-item-images",
+    "10191.png": "ospos-item-images",
+    "10192.png": "ospos-item-images",
+    "10195.png": "ospos-item-images",
+    "10196.png": "ospos-item-images",
+    "10198.png": "ospos-item-images",
+    "10199.png": "ospos-item-images",
+    "10200.png": "ospos-item-images",
+    "10221.png": "ospos-item-images",
+    "10226.png": "ospos-item-images"
+  }
+}

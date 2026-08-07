@@ -1,0 +1,74 @@
+[
+  {
+    "product_id": 7752,
+    "product_name": "PUXA SACO EM RENDA CAPA DE LIQUIDIFICADOR",
+    "ospos_item_id": 7763,
+    "pic_filename": "7763.png",
+    "status": "ok",
+    "error": null,
+    "ts": "2026-08-07T11:47:57-03:00"
+  },
+  {
+    "product_id": 3447,
+    "product_name": "CORTINA DE PIA TECIDO 1,35X0,80M OXFORD",
+    "ospos_item_id": 3451,
+    "pic_filename": "3451.png",
+    "status": "ok",
+    "error": null,
+    "ts": "2026-08-07T11:12:11-03:00"
+  },
+  {
+    "product_id": 8493,
+    "product_name": "SQUEEZE COSTELAÇAO 700 ML",
+    "ospos_item_id": 8504,
+    "pic_filename": "8504.png",
+    "status": "ok",
+    "error": null,
+    "ts": "2026-08-06T15:12:35-03:00"
+  },
+  {
+    "product_id": 4957,
+    "product_name": "ISQUEIRO HIPER",
+    "ospos_item_id": 4965,
+    "pic_filename": "4965.png",
+    "status": "ok",
+    "error": null,
+    "ts": "2026-08-06T13:31:53-03:00"
+  },
+  {
+    "product_id": 6004,
+    "product_name": "MARCA TEXTO COLOR SPOTLINNER",
+    "ospos_item_id": 6013,
+    "pic_filename": "6013.png",
+    "status": "ok",
+    "error": null,
+    "ts": "2026-08-06T13:31:43-03:00"
+  },
+  {
+    "product_id": 5934,
+    "product_name": "LUVA TRICOTADA PRETA KALIPSO",
+    "ospos_item_id": 5943,
+    "pic_filename": "5943.png",
+    "status": "ok",
+    "error": null,
+    "ts": "2026-08-06T13:29:45-03:00"
+  },
+  {
+    "product_id": 9975,
+    "product_name": "BALDE 7L PRETO",
+    "ospos_item_id": 9994,
+    "pic_filename": "9994.png",
+    "status": "ok",
+    "error": null,
+    "ts": "2026-08-06T13:28:28-03:00"
+  },
+  {
+    "product_id": 5641,
+    "product_name": "LAPISEIRA 0,7",
+    "ospos_item_id": 5650,
+    "pic_filename": "5650.png",
+    "status": "ok",
+    "error": null,
+    "ts": "2026-08-06T13:26:39-03:00"
+  }
+]
