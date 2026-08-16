@@ -91,7 +91,11 @@ async def _dashboard_poller(interval: int = 10) -> None:
       ``/sales/recent`` endpoint is served on demand.
     """
     last_sales_count = 0
-    last_alerts: dict[int, int] = {}  # item_id -> stock_status
+    # Seed the alert baseline so a service restart doesn't broadcast every
+    # existing alert as "new" (notification storm on app side).
+    last_alerts: dict[int, int] = {
+        a["item_id"]: a["stock_status"] for a in await ospos_client.fetch_stock_alerts(50)
+    }  # item_id -> stock_status
     # Start from the current max id so a service restart doesn't replay history.
     last_sale_id = await ospos_client.fetch_max_sale_id()
 
