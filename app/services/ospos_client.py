@@ -8,6 +8,7 @@ Provides the write-back of product photos into OSPOS
 from __future__ import annotations
 
 import logging
+from html import unescape as html_unescape
 from typing import Any, Optional
 
 from app.config import settings
@@ -154,3 +155,356 @@ async def fetch_items_total(
             count_row = await cur.fetchone()
             count = count_row[0] if count_row else 0
     return rows, count
+
+
+# ── Dashboard queries ──────────────────────────────────────────────────────
+
+
+async def fetch_dashboard_summary(
+    period: str = "today",
+    custom_start: Optional[str] = None,
+    custom_end: Optional[str] = None,
+) -> dict[str, Any]:
+    """Fetch sales KPIs for the given period.
+
+    period: "today" | "yesterday" | "week" | "month" | "custom"
+    custom_start / custom_end: "YYYY-MM-DD" when period="custom"
+    """
+    pool = await _pool()
+
+    # Build date filter
+    date_where, params = _build_date_filter(period, custom_start, custom_end)
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            # 1. Sales total for period (mirrors OSPOS sales/manage: sums received payments)
+            query = f"""
+                SELECT ROUND(SUM(sp.payment_amount - sp.cash_refund), 2) AS total
+                FROM ospos_sales_payments sp
+                JOIN ospos_sales s ON s.sale_id = sp.sale_id
+                WHERE s.sale_status = 0 AND sp.payment_amount > 0 {date_where}
+            """
+            await cur.execute(query, params)
+            row = await cur.fetchone()
+            sales_total = float(row[0]) if row and row[0] is not None else 0.0
+
+            # 1b. Same total for the previous equivalent period (comparison)
+            prev_where, prev_params = _build_prev_date_filter(period, custom_start, custom_end)
+            await cur.execute(
+                f"""
+                SELECT ROUND(SUM(sp.payment_amount - sp.cash_refund), 2) AS total
+                FROM ospos_sales_payments sp
+                JOIN ospos_sales s ON s.sale_id = sp.sale_id
+                WHERE s.sale_status = 0 AND sp.payment_amount > 0 {prev_where}
+                """,
+                prev_params,
+            )
+            row = await cur.fetchone()
+            prev_sales_total = float(row[0]) if row and row[0] is not None else 0.0
+            if prev_sales_total > 0:
+                change_pct = round((sales_total - prev_sales_total) / prev_sales_total * 100)
+            elif sales_total > 0:
+                change_pct = 100
+            else:
+                change_pct = 0
+
+            # 2. Transactions count
+            query = f"""
+                SELECT COUNT(DISTINCT s.sale_id)
+                FROM ospos_sales s
+                WHERE s.sale_status = 0 {date_where}
+            """
+            await cur.execute(query, params)
+            row = await cur.fetchone()
+            transactions = int(row[0]) if row and row[0] is not None else 0
+
+            # 3. Items sold (distinct)
+            query = f"""
+                SELECT COUNT(DISTINCT si.item_id)
+                FROM ospos_sales_items si
+                JOIN ospos_sales s ON s.sale_id = si.sale_id
+                WHERE s.sale_status = 0 {date_where}
+            """
+            await cur.execute(query, params)
+            row = await cur.fetchone()
+            items_sold = int(row[0]) if row and row[0] is not None else 0
+
+            # 4. Avg ticket
+            avg_ticket = sales_total / transactions if transactions > 0 else 0.0
+
+            # 5. Top 5 items by quantity
+            query = f"""
+                SELECT i.item_id, i.name, SUM(si.quantity_purchased) AS qty,
+                       ROUND(SUM(
+                           CASE WHEN si.discount_type = 1 THEN si.quantity_purchased * (si.item_unit_price - si.discount)
+                           ELSE si.quantity_purchased * si.item_unit_price - ROUND(si.quantity_purchased * si.item_unit_price * si.discount / 100, 2) END
+                       ), 2) AS revenue
+                FROM ospos_sales_items si
+                JOIN ospos_sales s ON s.sale_id = si.sale_id
+                JOIN ospos_items i ON i.item_id = si.item_id
+                WHERE s.sale_status = 0 {date_where}
+                GROUP BY si.item_id
+                ORDER BY qty DESC
+                LIMIT 5
+            """
+            await cur.execute(query, params)
+            cols = [d[0] for d in cur.description]
+            top_items = [dict(zip(cols, row)) async for row in cur]
+
+            # 6. Hourly sales (only for today/yesterday single day periods)
+            hourly = [0.0] * 24
+            hourly_max = 0.0
+            if period in ("today", "yesterday") or (period == "custom" and custom_start == custom_end):
+                query = f"""
+                    SELECT HOUR(s.sale_time) AS hour,
+                           ROUND(SUM(sp.payment_amount - sp.cash_refund), 2) AS total
+                    FROM ospos_sales_payments sp
+                    JOIN ospos_sales s ON s.sale_id = sp.sale_id
+                    WHERE s.sale_status = 0 AND sp.payment_amount > 0 {date_where}
+                    GROUP BY HOUR(s.sale_time)
+                    ORDER BY hour ASC
+                """
+                await cur.execute(query, params)
+                async for row in cur:
+                    hour = int(row[0])
+                    total = float(row[1])
+                    hourly[hour] = total
+                    if total > hourly_max:
+                        hourly_max = total
+
+            # 7. Daily sales target from app_config
+            await cur.execute("SELECT value FROM ospos_app_config WHERE `key` = 'daily_sales_target'")
+            row = await cur.fetchone()
+            daily_target = float(row[0]) if row and row[0] else 0.0
+            target_pct = min(100, round(sales_total / daily_target * 100)) if daily_target > 0 else 0
+
+            # 8. Pending receivables (fiado)
+            query = f"""
+                SELECT IFNULL(SUM(sp.payment_amount), 0)
+                FROM ospos_sales_payments sp
+                JOIN ospos_sales s ON s.sale_id = sp.sale_id
+                WHERE sp.payment_type = 'Fiado' {date_where}
+            """
+            await cur.execute(query, params)
+            row = await cur.fetchone()
+            pending_receivables = float(row[0]) if row and row[0] is not None else 0.0
+
+            # 9. Totals grouped by payment type (mirrors OSPOS sales/manage summary)
+            query = f"""
+                SELECT sp.payment_type, COUNT(sp.payment_amount) AS cnt,
+                       ROUND(SUM(sp.payment_amount - sp.cash_refund), 2) AS total
+                FROM ospos_sales_payments sp
+                JOIN ospos_sales s ON s.sale_id = sp.sale_id
+                WHERE s.sale_status = 0 AND sp.payment_amount > 0 {date_where}
+                GROUP BY sp.payment_type
+                ORDER BY total DESC
+            """
+            await cur.execute(query, params)
+            payment_summary = [
+                {
+                    "payment_type": html_unescape(row[0] or "Sem tipo"),
+                    "count": int(row[1] or 0),
+                    "total": float(row[2] or 0.0),
+                }
+                async for row in cur
+            ]
+
+    return {
+        "period": period,
+        "sales_total": sales_total,
+        "transactions": transactions,
+        "items_sold": items_sold,
+        "avg_ticket": round(avg_ticket, 2),
+        "top_items": top_items,
+        "hourly_sales": hourly,
+        "hourly_max": hourly_max,
+        "daily_target": daily_target,
+        "target_pct": target_pct,
+        "pending_receivables": pending_receivables,
+        "prev_sales_total": prev_sales_total,
+        "change_pct": change_pct,
+        "payment_summary": payment_summary,
+    }
+
+
+async def fetch_stock_alerts(limit: int = 20) -> list[dict]:
+    """Fetch items with ZERADO or IRREGULAR stock status."""
+    pool = await _pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            query = """
+                SELECT i.item_id, i.name, i.item_number, i.reorder_level,
+                       iq.quantity, iq.stock_status, iq.location_id
+                FROM ospos_items i
+                JOIN ospos_item_quantities iq ON iq.item_id = i.item_id
+                WHERE i.stock_type = 1
+                  AND i.deleted = 0
+                  AND iq.stock_status IN (1, 2)  -- 1=ZERADO, 2=IRREGULAR
+                ORDER BY iq.stock_status DESC, iq.quantity ASC
+                LIMIT %s
+            """
+            await cur.execute(query, (limit,))
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) async for row in cur]
+
+
+async def fetch_new_sales(after_sale_id: int, limit: int = 50) -> list[dict]:
+    """Fetch completed sales with ``sale_id > after_sale_id`` (oldest first).
+
+    Used by the dashboard poller to detect individual new sales and push
+    them one by one (for real-time notifications).
+    """
+    pool = await _pool()
+    rows: list[dict] = []
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT s.sale_id, s.sale_time,
+                       TRIM(CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, ''))) AS customer,
+                       COUNT(DISTINCT si.item_id) AS items_count,
+                       ROUND(SUM(
+                           CASE WHEN si.discount_type = 1 THEN si.quantity_purchased * (si.item_unit_price - si.discount)
+                           ELSE si.quantity_purchased * si.item_unit_price - ROUND(si.quantity_purchased * si.item_unit_price * si.discount / 100, 2) END
+                       ), 2) AS total
+                FROM ospos_sales s
+                JOIN ospos_sales_items si ON si.sale_id = s.sale_id
+                LEFT JOIN ospos_customers c ON c.person_id = s.customer_id
+                LEFT JOIN ospos_people p ON p.person_id = c.person_id
+                WHERE s.sale_status = 0 AND s.sale_id > %s
+                GROUP BY s.sale_id
+                ORDER BY s.sale_id ASC
+                LIMIT %s
+                """,
+                (after_sale_id, limit),
+            )
+            cols = [d[0] for d in cur.description]
+            async for row in cur:
+                item = dict(zip(cols, row))
+                if item.get("sale_time") is not None:
+                    item["sale_time"] = item["sale_time"].strftime("%Y-%m-%d %H:%M:%S")
+                rows.append(item)
+    return rows
+
+
+async def fetch_recent_sales(limit: int = 10) -> list[dict]:
+    """Fetch the last ``limit`` completed sales (newest first)."""
+    pool = await _pool()
+    rows: list[dict] = []
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT s.sale_id, s.sale_time,
+                       TRIM(CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, ''))) AS customer,
+                       COUNT(DISTINCT si.item_id) AS items_count,
+                       ROUND(SUM(
+                           CASE WHEN si.discount_type = 1 THEN si.quantity_purchased * (si.item_unit_price - si.discount)
+                           ELSE si.quantity_purchased * si.item_unit_price - ROUND(si.quantity_purchased * si.item_unit_price * si.discount / 100, 2) END
+                       ), 2) AS total
+                FROM ospos_sales s
+                JOIN ospos_sales_items si ON si.sale_id = s.sale_id
+                LEFT JOIN ospos_customers c ON c.person_id = s.customer_id
+                LEFT JOIN ospos_people p ON p.person_id = c.person_id
+                WHERE s.sale_status = 0
+                GROUP BY s.sale_id
+                ORDER BY s.sale_id DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            cols = [d[0] for d in cur.description]
+            async for row in cur:
+                item = dict(zip(cols, row))
+                if item.get("sale_time") is not None:
+                    item["sale_time"] = item["sale_time"].strftime("%Y-%m-%d %H:%M:%S")
+                rows.append(item)
+    return rows
+
+
+async def fetch_max_sale_id() -> int:
+    """Return the highest ``sale_id`` in ``ospos_sales`` (0 when empty)."""
+    pool = await _pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT COALESCE(MAX(sale_id), 0) FROM ospos_sales")
+            row = await cur.fetchone()
+    return int(row[0]) if row else 0
+
+
+async def fetch_stock_alert_count() -> int:
+    """Count of items with ZERADO or IRREGULAR stock status."""
+    pool = await _pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT COUNT(*)
+                FROM ospos_items i
+                JOIN ospos_item_quantities iq ON iq.item_id = i.item_id
+                WHERE i.stock_type = 1
+                  AND i.deleted = 0
+                  AND iq.stock_status IN (1, 2)
+            """)
+            row = await cur.fetchone()
+            return int(row[0]) if row and row[0] else 0
+
+
+def _build_date_filter(period: str, custom_start: Optional[str], custom_end: Optional[str]) -> tuple[str, list]:
+    """Build WHERE clause and params for date filtering on sales.sale_time."""
+    from datetime import date, timedelta
+
+    today = date.today()
+    params: list = []
+
+    if period == "today":
+        return "AND DATE(s.sale_time) = %s", [today]
+    elif period == "yesterday":
+        return "AND DATE(s.sale_time) = %s", [today - timedelta(days=1)]
+    elif period == "week":
+        # Monday start of week (YEARWEEK with mode 1)
+        return "AND YEARWEEK(s.sale_time, 1) = YEARWEEK(CURDATE(), 1)", []
+    elif period == "month":
+        return "AND MONTH(s.sale_time) = %s AND YEAR(s.sale_time) = %s", [today.month, today.year]
+    elif period == "custom" and custom_start:
+        if not custom_end:
+            custom_end = custom_start
+        return "AND DATE(s.sale_time) BETWEEN %s AND %s", [custom_start, custom_end]
+    else:
+        return "AND DATE(s.sale_time) = %s", [today]
+
+
+def _build_prev_date_filter(period: str, custom_start: Optional[str], custom_end: Optional[str]) -> tuple[str, list]:
+    """Build WHERE clause/params for the previous equivalent period.
+
+    Mirrors ``_build_date_filter`` so KPIs can be compared (e.g. today vs
+    yesterday, this month vs last month).
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    params: list = []
+
+    if period == "today":
+        return "AND DATE(s.sale_time) = %s", [today - timedelta(days=1)]
+    elif period == "yesterday":
+        return "AND DATE(s.sale_time) = %s", [today - timedelta(days=2)]
+    elif period == "week":
+        return "AND YEARWEEK(s.sale_time, 1) = YEARWEEK(CURDATE(), 1) - 1", []
+    elif period == "month":
+        if today.month == 1:
+            return "AND MONTH(s.sale_time) = 12 AND YEAR(s.sale_time) = %s", [today.year - 1]
+        return "AND MONTH(s.sale_time) = %s AND YEAR(s.sale_time) = %s", [today.month - 1, today.year]
+    elif period == "custom" and custom_start:
+        from datetime import datetime as dt
+
+        try:
+            start = dt.strptime(custom_start, "%Y-%m-%d").date()
+            end = dt.strptime(custom_end or custom_start, "%Y-%m-%d").date()
+        except ValueError:
+            return "AND DATE(s.sale_time) = %s", [today - timedelta(days=1)]
+        span = (end - start).days
+        prev_end = start - timedelta(days=1)
+        prev_start = prev_end - timedelta(days=span)
+        return "AND DATE(s.sale_time) BETWEEN %s AND %s", [prev_start, prev_end]
+    else:
+        return "AND DATE(s.sale_time) = %s", [today - timedelta(days=1)]

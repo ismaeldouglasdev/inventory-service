@@ -52,6 +52,7 @@ from app.api.v1.admin import (
 from app.api.v1.admin import router as admin_router
 from app.api.v1.onboarding import router as onboarding_router
 from app.api.v1.agent_bridge import router as agent_bridge_router
+from app.api.v1.dashboard import router as dashboard_router, start_dashboard_poller, stop_dashboard_poller
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
 # from app.services.event_processor import EventStoreProcessor
@@ -126,6 +127,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _set_store_sync_ref(store_sync)
     logger.info("StoreSync service registered")
 
+    # ── Dashboard Poller ────────────────────────────────────────────
+    start_dashboard_poller()
+    logger.info("Dashboard poller started")
+
     processor_task = None
     logger.info("EventStore Processor disabled")
 
@@ -133,6 +138,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── Shutdown ────────────────────────────────────────────────────
     logger.info("Shutting down Inventory Service")
+
+    stop_dashboard_poller()
 
     if cdc_task is not None:
         cdc_agent.stop()
@@ -240,6 +247,7 @@ app.include_router(store_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")
 app.include_router(onboarding_router, prefix="/v1")
 app.include_router(agent_bridge_router, prefix="/v1")
+app.include_router(dashboard_router, prefix="/v1")
 
 # ── APK download ──────────────────────────────────────────────────────────
 APK_PATH = Path(__file__).resolve().parent.parent / "static" / "app-debug.apk"
