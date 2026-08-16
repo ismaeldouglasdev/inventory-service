@@ -45,3 +45,32 @@ Objetivo: expor o catálogo de produtos e fotos do PC A (192.168.15.6:8000) para
 - Evitar `sync?mode=full` no inventory-service (8492 produtos) sem confirmação — aqui o sync-total é só leitura HTTP (leve), sem DB-heavy.
 
 > Criado: 2026-08-05 (sessão). Retomar amanhã.
+
+## 6. Status — 16/ago/2026 (implementado)
+
+- **Scripts:**
+  - `scripts/sync_catalog.py` — pagina `sync-total` (limit=1000), escreve `catalog.json`
+    (JSON compacto, inclui deletados via `--with-deleted`) e gera thumbs WebP ~110px
+    em `photos/<item_id>.webp` lendo as fotos **locais** (`uploads/item_pics`) — só
+    quando o thumb ainda não existe (delta). Sem download full-res.
+  - `scripts/sync_total_to_git.sh` — wrapper: fetch, checkout `sync/catalog`,
+    merge de `origin/main` (mantém código atualizado), roda o python, commit
+    incremental + push. `flock` p/ não rodar 2x.
+- **Timer (user):** `~/.config/systemd/user/sync-catalog.{service,timer}` — a cada 30min
+  (`systemctl --user enable --now sync-catalog.timer`). Validação: push funciona no
+  contexto systemd (keyring do `gh` acessível).
+- **Branch:** `origin/sync/catalog` = código de `main` + `catalog.json` (10254 itens) +
+  `photos/*.webp` (129). Atualizada a cada ciclo.
+- **Primeira sync:** 2026-08-16, commit `861601c`; merge de main `767030d`.
+
+### PC B — como consumir
+```bash
+git clone -b sync/catalog https://github.com/ismaeldouglasdev/inventory-service.git
+# catálogo + thumbs disponíveis imediatamente (catalog.json, photos/<item_id>.webp)
+# foto full-res quando precisar (LAN, PC A):
+curl -o /tmp/foto.png "http://192.168.15.6:8000/v1/store/ospos-item-images/10113.png"
+# atualizar (dados + código):
+git pull origin sync/catalog
+```
+- Para desenvolver: usar `main` (ou `sync/catalog`) — o merge diário mantém o código sincronizado.
+- Timer roda no PC A; PC B só dá `git pull`.
