@@ -337,7 +337,7 @@ async def fetch_stock_alerts(limit: int = 20) -> list[dict]:
                        iq.quantity, iq.stock_status, iq.location_id
                 FROM ospos_items i
                 JOIN ospos_item_quantities iq ON iq.item_id = i.item_id
-                WHERE i.stock_type = 1
+                WHERE i.stock_type = 0  -- 0 = item with stock (1 = non-stockable)
                   AND i.deleted = 0
                   AND iq.stock_status IN (1, 2)  -- 1=ZERADO, 2=IRREGULAR
                 ORDER BY iq.stock_status DESC, iq.quantity ASC
@@ -441,7 +441,7 @@ async def fetch_stock_alert_count() -> int:
                 SELECT COUNT(*)
                 FROM ospos_items i
                 JOIN ospos_item_quantities iq ON iq.item_id = i.item_id
-                WHERE i.stock_type = 1
+                WHERE i.stock_type = 0  -- 0 = item with stock (1 = non-stockable)
                   AND i.deleted = 0
                   AND iq.stock_status IN (1, 2)
             """)
