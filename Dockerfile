@@ -17,7 +17,10 @@ RUN pip install --no-cache-dir --prefix=/install \
     "alembic>=1.13.0" \
     "httpx>=0.27.0" \
     "python-dotenv>=1.0" \
-    "pycryptodome>=3.20.0"
+    "pycryptodome>=3.20.0" \
+    "prometheus-client>=0.20.0" \
+    "python-json-logger>=2.0.7" \
+    "python-multipart>=0.0.9"
 
 # =============================================================================
 # Stage 2 — Runtime
@@ -38,6 +41,9 @@ COPY alembic/ alembic/
 COPY alembic.ini .
 COPY pyproject.toml .
 COPY app/ app/
+COPY scripts/ scripts/
+COPY static/ static/
+COPY data/sync/ data/sync/
 
 # Runtime data directory
 RUN mkdir -p /app/data && chown -R app:app /app/data
@@ -46,4 +52,4 @@ USER app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && python scripts/seed_render.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

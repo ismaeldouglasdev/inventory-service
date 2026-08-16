@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: loja-online
+    runtime: docker
+    repo: https://github.com/ismaeldouglasdev/inventory-service
+    branch: sync/prod-data
+    plan: free
+    dockerContext: .
+    healthCheckPath: /v1/health
+    envVars:
+      - key: CDC_ENABLED
+        value: "false"
+      - key: LOG_LEVEL
+        value: info
+      - key: CORS_ORIGINS
+        value: '["*"]'

@@ -11,9 +11,9 @@ import re
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.utils.metrics import (
     requests_total,
@@ -51,6 +51,8 @@ from app.api.v1.admin import (
 from app.api.v1.admin import router as admin_router
 from app.api.v1.onboarding import router as onboarding_router
 from app.api.v1.agent_bridge import router as agent_bridge_router
+from app.api.v1.swarm import router as swarm_router
+from app.api.v1.observability import router as observability_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
 # from app.services.event_processor import EventStoreProcessor
@@ -239,6 +241,8 @@ app.include_router(store_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")
 app.include_router(onboarding_router, prefix="/v1")
 app.include_router(agent_bridge_router, prefix="/v1")
+app.include_router(swarm_router, prefix="/v1")
+app.include_router(observability_router, prefix="/v1")
 
 # ── APK download ──────────────────────────────────────────────────────────
 APK_PATH = Path(__file__).resolve().parent.parent / "static" / "app-debug.apk"
@@ -247,6 +251,34 @@ APK_PATH = Path(__file__).resolve().parent.parent / "static" / "app-debug.apk"
 @app.get("/app-debug.apk", include_in_schema=False)
 async def download_apk():
     if APK_PATH.exists():
-        from fastapi.responses import FileResponse
         return FileResponse(str(APK_PATH), media_type="application/vnd.android.package-archive", filename="app-debug.apk")
     return PlainTextResponse("APK not found", status_code=404)
+
+
+# ── Static frontend (loja SPA) ──────────────────────────────────────────
+# Serves the built loja frontend (static/) as a SPA. API routes under
+# /v1 are registered first (above), so they take precedence. Anything else
+# falls back to index.html so client-side routing works.
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    """Serve static assets and SPA fallback for the loja frontend."""
+    # Never shadow API routes with HTML
+    if full_path.startswith("v1/") or full_path == "v1":
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    requested = (STATIC_DIR / full_path).resolve()
+    # Path traversal guard
+    if not str(requested).startswith(str(STATIC_DIR.resolve())):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    if requested.is_file():
+        return FileResponse(str(requested))
+
+    index = STATIC_DIR / "index.html"
+    if index.exists():
+        return FileResponse(str(index), media_type="text/html")
+    raise HTTPException(status_code=404, detail="Not Found")
