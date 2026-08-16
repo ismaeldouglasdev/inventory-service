@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
-  "synced_at": "2026-08-07T12:05:08-0300",
+  "synced_at": "2026-08-16T12:21:41-0300",
   "prod_url": "http://192.168.15.6:8000",
   "catalog": {
-    "count": 10117,
-    "sha256": "9e17360ff1bbb8b3105aacc275a8a9f6082efffface0477dd19039ad59215a4f",
-    "changed": false
+    "count": 10130,
+    "sha256": "5f96a35823f90033718b78031fbb5b61b0778567a1be1dd6380ce888acba3993",
+    "changed": true
   },
   "metadata": {
     "stats": {
-      "total_products": 10224,
-      "visible_products": 81,
-      "with_images": 151,
-      "in_stock": 2304,
-      "categories": 91,
+      "total_products": 10237,
+      "visible_products": 105,
+      "with_images": 201,
+      "in_stock": 2141,
+      "categories": 95,
       "db_size_mb": 0.0,
       "images_count": 0,
       "images_size_mb": 0.0
@@ -21,27 +21,31 @@
     "categories": [
       {
         "name": "UTILIDADES",
-        "count": 30
+        "count": 39
       },
       {
         "name": "Geral",
-        "count": 11
+        "count": 15
       },
       {
         "name": "BRINQUEDOS",
-        "count": 9
-      },
-      {
-        "name": "PAPELARIA",
-        "count": 5
+        "count": 10
       },
       {
         "name": "COZINHA",
+        "count": 7
+      },
+      {
+        "name": "PAPELARIA",
+        "count": 6
+      },
+      {
+        "name": "brinquedos",
         "count": 4
       },
       {
         "name": "VIDROS",
-        "count": 3
+        "count": 4
       },
       {
         "name": "JARDINAGEM",
@@ -52,7 +56,7 @@
         "count": 3
       },
       {
-        "name": "brinquedos",
+        "name": "ELETRÔNICOS E ACESSÓRIOS",
         "count": 2
       },
       {
@@ -62,6 +66,10 @@
       {
         "name": "ELETRONICOS",
         "count": 2
+      },
+      {
+        "name": "utilidades",
+        "count": 1
       },
       {
         "name": "escolar",
@@ -80,98 +88,98 @@
         "count": 1
       },
       {
-        "name": "ELETRÔNICOS E ACESSÓRIOS",
-        "count": 1
-      },
-      {
         "name": "BRINQUEDO",
         "count": 1
       },
       {
         "name": "BANHEIRO",
         "count": 1
+      },
+      {
+        "name": "ALUMINIO",
+        "count": 1
       }
     ],
     "photos_recent": [
       {
-        "product_id": 7752,
-        "product_name": "PUXA SACO EM RENDA CAPA DE LIQUIDIFICADOR",
-        "ospos_item_id": 7763,
-        "pic_filename": "7763.png",
+        "product_id": 7554,
+        "product_name": "PRATO DURALEX FUNDO TRANSPARENTE DIAMANTE",
+        "ospos_item_id": 7564,
+        "pic_filename": "7564.png",
         "status": "ok",
         "error": null,
-        "ts": "2026-08-07T11:47:57-03:00"
+        "ts": "2026-08-11T16:25:00-03:00"
       },
       {
-        "product_id": 3447,
-        "product_name": "CORTINA DE PIA TECIDO 1,35X0,80M OXFORD",
-        "ospos_item_id": 3451,
-        "pic_filename": "3451.png",
+        "product_id": 7554,
+        "product_name": "PRATO DURALEX FUNDO TRANSPARENTE DIAMANTE",
+        "ospos_item_id": 7564,
+        "pic_filename": "7564.png",
         "status": "ok",
         "error": null,
-        "ts": "2026-08-07T11:12:11-03:00"
+        "ts": "2026-08-11T16:24:12-03:00"
       },
       {
-        "product_id": 8493,
-        "product_name": "SQUEEZE COSTELAÇAO 700 ML",
-        "ospos_item_id": 8504,
-        "pic_filename": "8504.png",
+        "product_id": 5460,
+        "product_name": "KIT RELOGIO INFANTIL",
+        "ospos_item_id": 5469,
+        "pic_filename": "5469.png",
         "status": "ok",
         "error": null,
-        "ts": "2026-08-06T15:12:35-03:00"
+        "ts": "2026-08-10T13:14:13-03:00"
       },
       {
-        "product_id": 4957,
-        "product_name": "ISQUEIRO HIPER",
-        "ospos_item_id": 4965,
-        "pic_filename": "4965.png",
+        "product_id": 5460,
+        "product_name": "KIT RELOGIO INFANTIL",
+        "ospos_item_id": 5469,
+        "pic_filename": "5469.png",
         "status": "ok",
         "error": null,
-        "ts": "2026-08-06T13:31:53-03:00"
+        "ts": "2026-08-10T13:13:08-03:00"
       },
       {
-        "product_id": 6004,
-        "product_name": "MARCA TEXTO COLOR SPOTLINNER",
-        "ospos_item_id": 6013,
-        "pic_filename": "6013.png",
+        "product_id": 5460,
+        "product_name": "KIT RELOGIO INFANTIL",
+        "ospos_item_id": 5469,
+        "pic_filename": "5469.png",
         "status": "ok",
         "error": null,
-        "ts": "2026-08-06T13:31:43-03:00"
+        "ts": "2026-08-10T13:12:27-03:00"
       },
       {
-        "product_id": 5934,
-        "product_name": "LUVA TRICOTADA PRETA KALIPSO",
-        "ospos_item_id": 5943,
-        "pic_filename": "5943.png",
+        "product_id": 10032,
+        "product_name": "POWERBLADE ARKTOYS",
+        "ospos_item_id": 10052,
+        "pic_filename": "10052.png",
         "status": "ok",
         "error": null,
-        "ts": "2026-08-06T13:29:45-03:00"
+        "ts": "2026-08-10T13:12:04-03:00"
       },
       {
-        "product_id": 9975,
-        "product_name": "BALDE 7L PRETO",
-        "ospos_item_id": 9994,
-        "pic_filename": "9994.png",
+        "product_id": 10055,
+        "product_name": "QUEBRA CABEÇA 48 PEÇAS",
+        "ospos_item_id": 10075,
+        "pic_filename": "10075.png",
         "status": "ok",
         "error": null,
-        "ts": "2026-08-06T13:28:28-03:00"
+        "ts": "2026-08-10T13:11:30-03:00"
       },
       {
-        "product_id": 5641,
-        "product_name": "LAPISEIRA 0,7",
-        "ospos_item_id": 5650,
-        "pic_filename": "5650.png",
+        "product_id": 9987,
+        "product_name": "COLORINDO",
+        "ospos_item_id": 10006,
+        "pic_filename": "10006.png",
         "status": "ok",
         "error": null,
-        "ts": "2026-08-06T13:26:39-03:00"
+        "ts": "2026-08-10T13:10:14-03:00"
       }
     ]
   },
   "photos": {
     "downloaded": 0,
-    "skipped": 102,
+    "skipped": 128,
     "failed": [],
-    "index_count": 102
+    "index_count": 128
   },
   "photo_index": {
     "25.png": "ospos-item-images",
@@ -201,6 +209,7 @@
     "1605.jpg": "ospos-item-images",
     "1614.png": "ospos-item-images",
     "1637.png": "ospos-item-images",
+    "1768.png": "ospos-item-images",
     "2016.png": "ospos-item-images",
     "2138.png": "ospos-item-images",
     "2235.png": "ospos-item-images",
@@ -212,15 +221,26 @@
     "3299.png": "ospos-item-images",
     "3333.png": "ospos-item-images",
     "3451.png": "ospos-item-images",
+    "3574.png": "ospos-item-images",
     "3625.png": "ospos-item-images",
+    "3814.png": "ospos-item-images",
+    "3836.png": "ospos-item-images",
+    "3903.png": "ospos-item-images",
+    "4066.png": "ospos-item-images",
+    "4076.png": "ospos-item-images",
+    "4119.png": "ospos-item-images",
+    "4213.png": "ospos-item-images",
     "4357.png": "ospos-item-images",
     "4387.png": "ospos-item-images",
     "4743.png": "ospos-item-images",
+    "4867.png": "ospos-item-images",
     "4965.png": "ospos-item-images",
     "4974.png": "ospos-item-images",
     "5073.png": "ospos-item-images",
     "5074.png": "ospos-item-images",
     "5134.png": "ospos-item-images",
+    "5166.png": "ospos-item-images",
+    "5469.png": "ospos-item-images",
     "5650.png": "ospos-item-images",
     "5701.png": "ospos-item-images",
     "5870.png": "ospos-item-images",
@@ -236,6 +256,9 @@
     "6622.png": "ospos-item-images",
     "6623.png": "ospos-item-images",
     "6646.png": "ospos-item-images",
+    "6654.png": "ospos-item-images",
+    "6985.png": "ospos-item-images",
+    "7564.png": "ospos-item-images",
     "7763.png": "ospos-item-images",
     "8040.png": "ospos-item-images",
     "8272.png": "ospos-item-images",
@@ -246,7 +269,9 @@
     "8560.png": "ospos-item-images",
     "8564.png": "ospos-item-images",
     "8574.png": "ospos-item-images",
+    "8852.png": "ospos-item-images",
     "8898.png": "ospos-item-images",
+    "9247.jpg": "ospos-item-images",
     "9267.png": "ospos-item-images",
     "9435.png": "ospos-item-images",
     "9463.png": "ospos-item-images",
@@ -255,16 +280,22 @@
     "9727.png": "ospos-item-images",
     "9818.png": "ospos-item-images",
     "9869.png": "ospos-item-images",
+    "9879.png": "ospos-item-images",
     "9883.png": "ospos-item-images",
+    "9912.png": "ospos-item-images",
     "9919.png": "ospos-item-images",
     "9935.png": "ospos-item-images",
     "9965.png": "ospos-item-images",
     "9976.png": "ospos-item-images",
     "9994.png": "ospos-item-images",
+    "10006.png": "ospos-item-images",
     "10045.png": "ospos-item-images",
+    "10052.png": "ospos-item-images",
+    "10075.png": "ospos-item-images",
     "10095.png": "ospos-item-images",
     "10113.png": "ospos-item-images",
     "10120.png": "ospos-item-images",
+    "10157.jpg": "ospos-item-images",
     "10162.png": "ospos-item-images",
     "10190.png": "ospos-item-images",
     "10191.png": "ospos-item-images",
@@ -274,6 +305,9 @@
     "10198.png": "ospos-item-images",
     "10199.png": "ospos-item-images",
     "10200.png": "ospos-item-images",
+    "10216.png": "ospos-item-images",
+    "10218.png": "ospos-item-images",
+    "10219.png": "ospos-item-images",
     "10221.png": "ospos-item-images",
     "10226.png": "ospos-item-images"
   }
