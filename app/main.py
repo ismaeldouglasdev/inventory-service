@@ -127,7 +127,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _set_store_sync_ref(store_sync)
     logger.info("StoreSync service registered")
 
-    processor_task = None
+    processor_task: asyncio.Task | None = None
     logger.info("EventStore Processor disabled")
 
     yield
