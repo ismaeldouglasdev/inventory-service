@@ -206,7 +206,7 @@ class RecentSale(BaseModel):
 class StockAlert(BaseModel):
     item_id: int
     name: str
-    item_number: str
+    item_number: str = ""
     reorder_level: int
     quantity: int
     stock_status: int  # 1=ZERADO, 2=IRREGULAR

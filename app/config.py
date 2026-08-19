@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     ospos_api_url: str = ""  # REST fallback (optional)
     ospos_uploads_dir: str = "/var/www/html/pos/public/uploads/item_pics"
 
+    # ── LaMa (inpainting local via ONNX — leve) ───────────────────────
+    lama_model_path: str = "/home/ismael/lama-onnx/lama_fp32.onnx"
+    lama_threads: int = 2          # threads de inferência (i3-3220T 2C/4T)
+
     # ── AI / LLM ────────────────────────────────────────────────────────
     ai_api_url: str = ""
     ai_api_key: str = ""

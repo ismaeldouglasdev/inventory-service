@@ -19,6 +19,8 @@ def notify_agent_status(name: str, status: str) -> None:
     _push_event("agent_status_change", {"agent": name, "status": status})
 def notify_message_sent(to: str, msg_type: str, body_preview: str = "") -> None:
     _push_event("agent_message_sent", {"to": to, "type": msg_type, "preview": body_preview[:200]})
+def notify_message_pending(target: str) -> None:
+    _push_event("agent_message_pending", {"target": target})
 
 def _push_event(etype: str, data: dict) -> None:
     entry = {"type": etype, "data": data, "timestamp": time.time()}
