@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.utils.metrics import (
     requests_total,
@@ -51,6 +52,7 @@ from app.api.v1.admin import (
 from app.api.v1.admin import router as admin_router
 from app.api.v1.onboarding import router as onboarding_router
 from app.api.v1.agent_bridge import router as agent_bridge_router
+from app.api.v1.dashboard import router as dashboard_router, start_dashboard_poller, stop_dashboard_poller
 from app.api.v1.swarm import router as swarm_router
 from app.api.v1.observability import router as observability_router
 from app.config import settings
@@ -127,6 +129,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _set_store_sync_ref(store_sync)
     logger.info("StoreSync service registered")
 
+    # ── Dashboard Poller ────────────────────────────────────────────
+    start_dashboard_poller()
+    logger.info("Dashboard poller started")
+
     processor_task: asyncio.Task | None = None
     logger.info("EventStore Processor disabled")
 
@@ -134,6 +140,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── Shutdown ────────────────────────────────────────────────────
     logger.info("Shutting down Inventory Service")
+
+    stop_dashboard_poller()
 
     if cdc_task is not None:
         cdc_agent.stop()
@@ -241,6 +249,7 @@ app.include_router(store_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")
 app.include_router(onboarding_router, prefix="/v1")
 app.include_router(agent_bridge_router, prefix="/v1")
+app.include_router(dashboard_router, prefix="/v1")
 app.include_router(swarm_router, prefix="/v1")
 app.include_router(observability_router, prefix="/v1")
 
