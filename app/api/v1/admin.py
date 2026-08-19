@@ -141,26 +141,48 @@ async def list_admin_products(
     page: int = Query(1, ge=1, le=10000),
     per_page: int = Query(50, ge=1, le=200),
     search: Optional[str] = Query(None, min_length=1, max_length=100),
-    has_image: Optional[bool] = Query(None),
+    has_image: Optional[str] = Query(None),
+    store_visible: Optional[str] = Query(None),
+    category: Optional[str] = Query(None, max_length=100),
+    sort: Optional[str] = Query(None, pattern="^(name|price|stock|ospos_id)$"),
+    order: Optional[str] = Query("asc", pattern="^(asc|desc)$"),
     session: AsyncSession = Depends(get_session),
 ):
-    """Full product list (all products, admin view)."""
     query = select(StoreProduct)
 
     if search:
         query = query.where(StoreProduct.name.ilike(f"%{search}%"))
-    if has_image is True:
-        query = query.where(StoreProduct.image_url.isnot(None))
-    elif has_image is False:
-        query = query.where(StoreProduct.image_url.is_(None))
+
+    if has_image is not None:
+        val = has_image.lower() in ("true", "1", "yes")
+        if val:
+            query = query.where(StoreProduct.image_url.isnot(None))
+        else:
+            query = query.where(StoreProduct.image_url.is_(None))
+
+    if store_visible is not None:
+        val = store_visible.lower() in ("true", "1", "yes")
+        query = query.where(StoreProduct.store_visible == val)
+
+    if category:
+        query = query.where(StoreProduct.category.ilike(f"%{category}%"))
 
     # Count
     count_q = select(func.count()).select_from(query.subquery())
     total = (await session.execute(count_q)).scalar() or 0
     total_pages = max(1, -(-total // per_page))  # ceil division
 
-    # Sort by ospos_id for consistent ordering
-    query = query.order_by(StoreProduct.ospos_id).offset((page - 1) * per_page).limit(per_page)
+    # Sort
+    sort_col = {
+        "name": StoreProduct.name,
+        "price": StoreProduct.price,
+        "stock": StoreProduct.stock,
+        "ospos_id": StoreProduct.ospos_id,
+    }.get(sort or "ospos_id", StoreProduct.ospos_id)
+    if order == "desc":
+        query = query.order_by(sort_col.desc())
+    else:
+        query = query.order_by(sort_col.asc()).offset((page - 1) * per_page).limit(per_page)
     result = await session.execute(query)
     products = result.scalars().all()
 
@@ -244,3 +266,255 @@ async def map_product_image(
     await session.commit()
 
     return {"success": True, "image_url": image_url, "product_id": product.id, "ospos_id": req.item_id}
+
+
+# ── Product detail + CRUD ────────────────────────────────────────────────
+
+
+class ProductDetailOut(BaseModel):
+    id: int
+    ospos_id: int
+    name: str
+    sku: str
+    description: str
+    category: str
+    price: float
+    stock: int
+    image_url: Optional[str] = None
+    store_visible: bool
+
+    model_config = {"from_attributes": True}
+
+
+class ProductUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+    stock: Optional[int] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    store_visible: Optional[bool] = None
+
+
+class RotateRequest(BaseModel):
+    degrees: int = 90
+
+
+class CropRequest(BaseModel):
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class InpaintRequest(BaseModel):
+    mask_base64: str
+    prompt: str = "remove price tag, fill with product background"
+
+
+def _get_data_dir() -> Path:
+    return Path(__file__).resolve().parent.parent.parent.parent / "data"
+
+
+def _get_image_path(product: StoreProduct) -> Path:
+    if not product.image_url:
+        raise HTTPException(400, "Product has no image")
+    filename = product.image_url.split("/")[-1]
+    return _get_data_dir() / "images" / filename
+
+
+def _backup_image(img_path: Path) -> None:
+    originals = img_path.parent / "originals"
+    originals.mkdir(parents=True, exist_ok=True)
+    backup = originals / img_path.name
+    if not backup.exists():
+        import shutil
+        shutil.copy2(img_path, backup)
+        logger.info("Backed up original: %s", backup)
+
+
+@router.get("/products/{product_id}", dependencies=[Depends(verify_api_key)])
+async def get_admin_product(product_id: int, session: AsyncSession = Depends(get_session)):
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Product not found")
+    return ProductDetailOut.model_validate(product)
+
+
+@router.put("/products/{product_id}", dependencies=[Depends(verify_api_key)])
+async def update_admin_product(
+    product_id: int,
+    body: ProductUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    from datetime import datetime, timezone
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(422, "No fields to update")
+
+    for field, value in updates.items():
+        setattr(product, field, value)
+    product.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(product)
+
+    return ProductDetailOut.model_validate(product)
+
+
+@router.post("/products/{product_id}/image/rotate", dependencies=[Depends(verify_api_key)])
+async def rotate_product_image(
+    product_id: int,
+    body: RotateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    from PIL import Image
+
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    img_path = _get_image_path(product)
+    if not img_path.exists():
+        raise HTTPException(404, "Image file not found on disk")
+
+    _backup_image(img_path)
+
+    with Image.open(img_path) as img:
+        rotated = img.rotate(-body.degrees, expand=True)
+        rotated.save(img_path)
+
+    return {"success": True, "degrees": body.degrees, "path": str(img_path.name)}
+
+
+@router.post("/products/{product_id}/image/crop", dependencies=[Depends(verify_api_key)])
+async def crop_product_image(
+    product_id: int,
+    body: CropRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    from PIL import Image
+
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    img_path = _get_image_path(product)
+    if not img_path.exists():
+        raise HTTPException(404, "Image file not found on disk")
+
+    _backup_image(img_path)
+
+    with Image.open(img_path) as img:
+        box = (body.x, body.y, body.x + body.width, body.y + body.height)
+        cropped = img.crop(box)
+        cropped.save(img_path)
+
+    return {"success": True, "crop": {"x": body.x, "y": body.y, "w": body.width, "h": body.height}}
+
+
+@router.post("/products/{product_id}/image/inpaint", dependencies=[Depends(verify_api_key)])
+async def inpaint_product_image(
+    product_id: int,
+    body: InpaintRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    import base64
+    import httpx
+
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    img_path = _get_image_path(product)
+    if not img_path.exists():
+        raise HTTPException(404, "Image file not found on disk")
+
+    _backup_image(img_path)
+
+    # Read image as base64
+    img_bytes = img_path.read_bytes()
+    ext = img_path.suffix.lower().lstrip(".")
+    mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, "image/png")
+    img_b64 = base64.b64encode(img_bytes).decode()
+
+    # Call 9router inpainting API
+    router_url = "http://localhost:20131/v1/images/generations"
+    router_key = "sk-47cf0a5d2c5c4000-zjk3df-94c6d9ba"
+
+    payload = {
+        "model": "cf/@cf/runwayml/stable-diffusion-v1-5-inpainting",
+        "prompt": body.prompt,
+        "image": f"data:{mime};base64,{img_b64}",
+        "mask": f"data:image/png;base64,{body.mask_base64}",
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            router_url,
+            json=payload,
+            headers={"Authorization": f"Bearer {router_key}"},
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(502, f"Inpainting API error: {resp.text[:200]}")
+
+    data = resp.json()
+    if "data" not in data or not data["data"]:
+        raise HTTPException(502, "Inpainting returned no result")
+
+    # Save result
+    item = data["data"][0]
+    if "b64_json" in item:
+        result_bytes = base64.b64decode(item["b64_json"])
+        img_path.write_bytes(result_bytes)
+    elif "url" in item:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            img_resp = await client.get(item["url"])
+            img_path.write_bytes(img_resp.content)
+    else:
+        raise HTTPException(502, "Inpainting returned unexpected format")
+
+    return {"success": True, "path": str(img_path.name)}
+
+
+@router.post("/products/{product_id}/image/restore", dependencies=[Depends(verify_api_key)])
+async def restore_product_image(
+    product_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    import shutil
+
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(404, "Product not found")
+
+    img_path = _get_image_path(product)
+    originals = img_path.parent / "originals"
+    backup = originals / img_path.name
+
+    if not backup.exists():
+        raise HTTPException(404, "No original backup found for this image")
+
+    shutil.copy2(backup, img_path)
+    return {"success": True, "restored": str(img_path.name)}
