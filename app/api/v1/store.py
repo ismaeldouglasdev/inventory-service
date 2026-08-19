@@ -552,6 +552,234 @@ async def upload_product_image(
     }
 
 
+@router.post("/photos/clean", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
+async def clean_product_photo(
+    file: UploadFile = File(...),
+    item_id: Optional[int] = Query(None, description="OSPOS item id — alvo direto"),
+    product_id: Optional[int] = Query(None, description="Store product id — resolve o item via mapeamento"),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Substitui a foto de um item OSPOS pela versão com a etiqueta removida.
+
+    A imagem chega já processada (inpaint feito no próprio celular via
+    OpenCV.js). Aqui só fazemos o write-back: copia para
+    ``uploads/item_pics/{item_id}{ext}`` (chmod/chown www-data), remove o
+    thumb antigo e atualiza ``ospos_items.pic_filename``. Se um produto da
+    loja estiver vinculado ao item, a imagem local da loja
+    (``data/images/product_{id}{ext}``) também é atualizada.
+
+    Um de ``item_id`` ou ``product_id`` é obrigatório (item_id tem prioridade).
+    """
+    from app.services import ospos_client
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Max {MAX_IMAGE_SIZE // (1024 * 1024)} MB.",
+        )
+
+    # ── Resolve o item OSPOS alvo ─────────────────────────────────────
+    product = None
+    if item_id is None and product_id is None:
+        raise HTTPException(status_code=400, detail="Provide item_id or product_id")
+
+    if product_id is not None:
+        result = await session.execute(
+            select(StoreProduct).where(StoreProduct.id == product_id)
+        )
+        product = result.scalar_one_or_none()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        target_id = await ospos_client.resolve_photo_target(product.ospos_id, product.sku)
+        if not target_id:
+            raise HTTPException(
+                status_code=409,
+                detail="No active OSPOS item for this product (mapped item is deleted)",
+            )
+    else:
+        target_id = item_id
+        result = await session.execute(
+            select(StoreProduct).where(StoreProduct.ospos_id == item_id).limit(1)
+        )
+        product = result.scalars().first()
+
+    # ── Grava a foto limpa no OSPOS ───────────────────────────────────
+    ospos_uploads = Path(settings.ospos_uploads_dir)
+    ospos_uploads.mkdir(parents=True, exist_ok=True)
+    fname = f"{target_id}{ext}"
+
+    # Backup da foto atual (qualquer extensão) antes de sobrescrever.
+    try:
+        from datetime import datetime
+        bak_dir = Path(__file__).resolve().parent.parent.parent.parent / "data" / "photo_backups"
+        bak_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for cur in ospos_uploads.glob(f"{target_id}.*"):
+            if cur.suffix.lower() in ALLOWED_EXTENSIONS:
+                shutil.copy2(cur, bak_dir / f"{target_id}_{stamp}{cur.suffix.lower()}")
+                break
+    except OSError as exc:  # pragma: no cover
+        logger.warning("photo backup failed for item %s: %s", target_id, exc)
+
+    # Remove versões antigas com outra extensão e o thumb gerado pelo OSPOS.
+    for old in ospos_uploads.glob(f"{target_id}.*"):
+        if old.suffix.lower() in ALLOWED_EXTENSIONS and old.name != fname:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    for old in ospos_uploads.glob(f"{target_id}_thumb.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+    dest = ospos_uploads / fname
+    if dest.exists():
+        dest.unlink()
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_bytes(contents)
+    os.chown(tmp, -1, grp.getgrnam("www-data").gr_gid)
+    os.chmod(tmp, 0o664)
+    tmp.rename(dest)
+
+    await ospos_client.set_pic_filename(target_id, fname)
+
+    # ── Sincroniza a imagem da loja (se houver produto vinculado) ─────
+    local_image = None
+    if product is not None:
+        try:
+            IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+            new_path = IMAGE_DIR / f"product_{product.id}{ext}"
+            if new_path.exists():
+                new_path.unlink()
+            new_path.write_bytes(contents)
+            os.chmod(new_path, 0o664)
+            for old in ALLOWED_EXTENSIONS:
+                old_path = IMAGE_DIR / f"product_{product.id}{old}"
+                if old_path.exists() and old_path != new_path:
+                    old_path.unlink()
+            product.image_url = f"/v1/store/images/{new_path.name}"
+            product.updated_at = __import__("datetime").datetime.now(__import__("zoneinfo").ZoneInfo("UTC"))
+            await session.commit()
+            local_image = new_path.name
+        except Exception as exc:  # pragma: no cover
+            logger.warning("loja image update failed for product %s: %s", product.id, exc)
+
+    logger.info("Cleaned photo written back: OSPOS item %s → %s (local %s)", target_id, fname, local_image)
+
+    return {
+        "success": True,
+        "item_id": target_id,
+        "pic_filename": fname,
+        "image_url": f"/v1/store/ospos-item-images/{fname}",
+        "store_image": local_image,
+    }
+
+
+# ── LaMa (inpainting local no PC via ONNX) ────────────────────────────────
+
+# Serializa a inferência (1 foto por vez) para não estourar a RAM do PC.
+_lama_lock = asyncio.Lock()
+
+
+@router.post("/photos/lama", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
+async def lama_product_photo(
+    file: UploadFile = File(...),
+    mask: UploadFile = File(...),
+    item_id: Optional[int] = Query(None, description="OSPOS item id"),
+    product_id: Optional[int] = Query(None, description="Store product id"),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Remove a etiqueta via LaMa (ONNX) rodando local no PC.
+
+    Recebe a foto + máscara (branco = área a remover), roda LaMa com
+    resolução limitada a ``lama_max_side`` (leve, ~1GB) e devolve o
+    resultado em alta resolução como data URI base64 — só a região da
+    máscara é substituída (com borda suavizada), o resto fica idêntico.
+
+    NÃO faz write-back no OSPOS: o app envia o resultado para
+    ``POST /photos/clean`` quando o usuário salvar.
+    """
+    import base64
+    import io
+
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    if not file.filename or not mask.filename:
+        raise HTTPException(status_code=400, detail="file and mask required")
+    if (
+        Path(file.filename).suffix.lower() not in ALLOWED_EXTENSIONS
+        or Path(mask.filename).suffix.lower() not in ALLOWED_EXTENSIONS
+    ):
+        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: jpg, jpeg, png, webp, gif")
+
+    contents = await file.read()
+    mask_bytes = await mask.read()
+    if not contents or not mask_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(contents) > MAX_IMAGE_SIZE or len(mask_bytes) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=400, detail=f"File too large. Max {MAX_IMAGE_SIZE // (1024 * 1024)} MB.")
+
+    try:
+        original = Image.open(io.BytesIO(contents))
+        original.load()
+        original = original.convert("RGB")
+        msk = Image.open(io.BytesIO(mask_bytes)).convert("L")
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=400, detail=f"Invalid image: {exc}")
+
+    # ── Inferência (serializada, em thread) ───────────────────────────
+    from app.services import lama_inpainter
+
+    loop = asyncio.get_running_loop()
+    async with _lama_lock:
+        try:
+            result = await loop.run_in_executor(
+                None, lambda: lama_inpainter.inpaint_pil(original, msk)
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.error("LaMa inference failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"LaMa inference failed: {exc}")
+
+    # ── Composição em alta resolução (só a região da máscara muda) ────
+    full = result.resize(original.size, Image.LANCZOS)
+    feather = msk.filter(ImageFilter.GaussianBlur(radius=10))
+    m_arr = np.asarray(feather, dtype=np.float32)[..., None] / 255.0
+    o_arr = np.asarray(original, dtype=np.float32)
+    f_arr = np.asarray(full, dtype=np.float32)
+    blended = np.clip(o_arr * (1.0 - m_arr) + f_arr * m_arr, 0, 255).astype(np.uint8)
+    final = Image.fromarray(blended, "RGB")
+
+    buf = io.BytesIO()
+    final.save(buf, "JPEG", quality=92, optimize=True)
+    data_b64 = base64.b64encode(buf.getvalue()).decode()
+    logger.info(
+        "LaMa inpainting done: %sx%s → %sx%s",
+        original.width, original.height, final.width, final.height,
+    )
+    return {
+        "success": True,
+        "width": final.width,
+        "height": final.height,
+        "mime": "image/jpeg",
+        "data": "data:image/jpeg;base64," + data_b64,
+    }
+
+
 # ── Photo upload status (real-time feedback) ──────────────────────────────
 
 

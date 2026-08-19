@@ -130,7 +130,7 @@ async def fetch_items_total(
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             query = (
-                "SELECT i.item_id, i.item_number, i.name, i.category, i.description, "
+                "SELECT i.item_id, COALESCE(i.item_number,'') AS item_number, i.name, i.category, i.description, "
                 "i.cost_price, i.unit_price, i.pic_filename, i.last_modified, i.deleted, "
                 "COALESCE(q.total_qty, 0) AS stock "
                 "FROM ospos_items i "
@@ -333,7 +333,7 @@ async def fetch_stock_alerts(limit: int = 20) -> list[dict]:
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             query = """
-                SELECT i.item_id, i.name, i.item_number, i.reorder_level,
+                SELECT i.item_id, i.name, COALESCE(i.item_number, '') AS item_number, i.reorder_level,
                        iq.quantity, iq.stock_status, iq.location_id
                 FROM ospos_items i
                 JOIN ospos_item_quantities iq ON iq.item_id = i.item_id
@@ -461,8 +461,8 @@ def _build_date_filter(period: str, custom_start: Optional[str], custom_end: Opt
     elif period == "yesterday":
         return "AND DATE(s.sale_time) = %s", [today - timedelta(days=1)]
     elif period == "week":
-        # Monday start of week (YEARWEEK with mode 1)
-        return "AND YEARWEEK(s.sale_time, 1) = YEARWEEK(CURDATE(), 1)", []
+        # Last 7 days (rolling), more useful than calendar Mon-Sun for shop owners
+        return "AND DATE(s.sale_time) >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)", []
     elif period == "month":
         return "AND MONTH(s.sale_time) = %s AND YEAR(s.sale_time) = %s", [today.month, today.year]
     elif period == "custom" and custom_start:
@@ -489,7 +489,8 @@ def _build_prev_date_filter(period: str, custom_start: Optional[str], custom_end
     elif period == "yesterday":
         return "AND DATE(s.sale_time) = %s", [today - timedelta(days=2)]
     elif period == "week":
-        return "AND YEARWEEK(s.sale_time, 1) = YEARWEEK(CURDATE(), 1) - 1", []
+        # Previous 7-day window (days 7–13 ago)
+        return "AND DATE(s.sale_time) BETWEEN DATE_SUB(CURDATE(), INTERVAL 13 DAY) AND DATE_SUB(CURDATE(), INTERVAL 7 DAY)", []
     elif period == "month":
         if today.month == 1:
             return "AND MONTH(s.sale_time) = 12 AND YEAR(s.sale_time) = %s", [today.year - 1]
