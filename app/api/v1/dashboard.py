@@ -256,9 +256,12 @@ async def get_stock_alert_count() -> dict[str, int]:
 @router.get("/sales/recent", response_model=list[RecentSale])
 async def get_recent_sales(
     limit: int = Query(10, ge=1, le=50),
+    period: str = Query("today", pattern=r"^(today|yesterday|week|month|custom)$"),
+    start: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
 ) -> Any:
-    """Get the most recent completed sales (newest first)."""
-    return await ospos_client.fetch_recent_sales(limit)
+    """Get the most recent completed sales (newest first), filtered by period."""
+    return await ospos_client.fetch_recent_sales(limit, period, start, end)
 
 
 # ── WebSocket Endpoint ────────────────────────────────────────────────────

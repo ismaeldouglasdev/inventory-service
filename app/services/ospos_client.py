@@ -272,10 +272,31 @@ async def fetch_dashboard_summary(
                     if total > hourly_max:
                         hourly_max = total
 
-            # 7. Daily sales target from app_config
+            # 7. Daily sales target from app_config (adjusted for period length)
             await cur.execute("SELECT value FROM ospos_app_config WHERE `key` = 'daily_sales_target'")
             row = await cur.fetchone()
-            daily_target = float(row[0]) if row and row[0] else 0.0
+            daily_target_raw = float(row[0]) if row and row[0] else 0.0
+            # Compute period length in days to scale the target
+            from datetime import date as _date, timedelta as _td
+            _today = _date.today()
+            if period == "today":
+                period_days = 1
+            elif period == "yesterday":
+                period_days = 1
+            elif period == "week":
+                period_days = 7
+            elif period == "month":
+                period_days = _today.day  # days elapsed this month
+            elif period == "custom" and custom_start:
+                try:
+                    _s = _date.fromisoformat(custom_start)
+                    _e = _date.fromisoformat(custom_end or custom_start)
+                    period_days = max(1, (_e - _s).days + 1)
+                except ValueError:
+                    period_days = 1
+            else:
+                period_days = 1
+            daily_target = daily_target_raw * period_days
             target_pct = min(100, round(sales_total / daily_target * 100)) if daily_target > 0 else 0
 
             # 8. Pending receivables (fiado)
@@ -387,14 +408,20 @@ async def fetch_new_sales(after_sale_id: int, limit: int = 50) -> list[dict]:
     return rows
 
 
-async def fetch_recent_sales(limit: int = 10) -> list[dict]:
-    """Fetch the last ``limit`` completed sales (newest first)."""
+async def fetch_recent_sales(
+    limit: int = 10,
+    period: str = "today",
+    custom_start: str | None = None,
+    custom_end: str | None = None,
+) -> list[dict]:
+    """Fetch the last ``limit`` completed sales (newest first), filtered by period."""
+    date_where, params = _build_date_filter(period, custom_start, custom_end)
     pool = await _pool()
     rows: list[dict] = []
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                """
+                f"""
                 SELECT s.sale_id, s.sale_time,
                        TRIM(CONCAT(COALESCE(p.first_name, ''), ' ', COALESCE(p.last_name, ''))) AS customer,
                        COUNT(DISTINCT si.item_id) AS items_count,
@@ -406,12 +433,12 @@ async def fetch_recent_sales(limit: int = 10) -> list[dict]:
                 JOIN ospos_sales_items si ON si.sale_id = s.sale_id
                 LEFT JOIN ospos_customers c ON c.person_id = s.customer_id
                 LEFT JOIN ospos_people p ON p.person_id = c.person_id
-                WHERE s.sale_status = 0
+                WHERE s.sale_status = 0 {date_where}
                 GROUP BY s.sale_id
                 ORDER BY s.sale_id DESC
                 LIMIT %s
                 """,
-                (limit,),
+                (*params, limit),
             )
             cols = [d[0] for d in cur.description]
             async for row in cur:
