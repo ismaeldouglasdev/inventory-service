@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -456,8 +457,8 @@ async def inpaint_product_image(
     img_b64 = base64.b64encode(img_bytes).decode()
 
     # Call 9router inpainting API
-    router_url = "http://localhost:20131/v1/images/generations"
-    router_key = "sk-47cf0a5d2c5c4000-zjk3df-94c6d9ba"
+    router_url = os.environ.get("INPAINT_URL", "http://localhost:20131/v1/images/generations")
+    router_key = os.environ.get("INPAINT_KEY", "")
 
     payload = {
         "model": "cf/@cf/runwayml/stable-diffusion-v1-5-inpainting",
