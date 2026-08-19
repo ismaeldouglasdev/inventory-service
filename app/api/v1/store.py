@@ -18,8 +18,7 @@ from typing import Any, Optional
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -283,9 +282,34 @@ async def list_categories(
 
 @router.get("/images/{filename:path}")
 async def serve_product_image(filename: str) -> Any:
-    """Serve a product image from local storage."""
+    """Serve a product image — R2 first, local fallback."""
+    from app.services import r2_storage
+
     if ".." in filename or "/" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
+
+    r2_key = f"images/{filename}"
+    img_bytes = r2_storage.download(r2_key)
+
+    if img_bytes is not None:
+        ext = Path(filename).suffix.lower()
+        media_types = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+        }
+        media_type = media_types.get(ext, "application/octet-stream")
+        return Response(
+            content=img_bytes,
+            media_type=media_type,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     filepath = IMAGE_DIR / filename
     if not filepath.exists() or not filepath.is_file():
@@ -464,14 +488,21 @@ async def upload_product_image(
     filename = f"product_{product_id}{ext}"
     filepath = IMAGE_DIR / filename
 
+    from app.services import r2_storage
+
     # Remove old image with different extension
     for old_ext in ALLOWED_EXTENSIONS:
         old_path = IMAGE_DIR / f"product_{product_id}{old_ext}"
         if old_path.exists() and old_path != filepath:
             old_path.unlink()
+        old_r2_key = f"images/product_{product_id}{old_ext}"
+        if old_r2_key != f"images/{filename}":
+            r2_storage.delete(old_r2_key)
 
     with open(filepath, "wb") as f:
         f.write(contents)
+
+    r2_storage.upload(f"images/{filename}", contents, r2_storage.get_content_type(filename))
 
     # ── Update local DB ─────────────────────────────────────────────
     image_url = f"/v1/store/images/{filename}"
@@ -875,6 +906,9 @@ async def link_existing_image(
 
     import shutil
     shutil.copy2(src, dest)
+
+    from app.services import r2_storage
+    r2_storage.upload(f"images/{dest_name}", src.read_bytes(), r2_storage.get_content_type(dest_name))
 
     image_url = f"/v1/store/images/{dest_name}"
     product.image_url = image_url
