@@ -1,0 +1,29 @@
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# Project data regenerated at boot (seed_render.py)
+data/images/
+data/inventory.db
+data/*.db
+*.sqlite3
+logs/
+ospos_export.csv
+final_mapping.json
+notas*.md
+*.md
