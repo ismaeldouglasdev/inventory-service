@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -316,10 +317,14 @@ def _get_data_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent / "data"
 
 
-def _get_image_path(product: StoreProduct) -> Path:
+def _get_image_filename(product: StoreProduct) -> str:
     if not product.image_url:
         raise HTTPException(400, "Product has no image")
-    filename = product.image_url.split("/")[-1]
+    return product.image_url.split("/")[-1]
+
+
+def _get_image_path(product: StoreProduct) -> Path:
+    filename = _get_image_filename(product)
     return _get_data_dir() / "images" / filename
 
 
@@ -331,6 +336,30 @@ def _backup_image(img_path: Path) -> None:
         import shutil
         shutil.copy2(img_path, backup)
         logger.info("Backed up original: %s", backup)
+
+
+async def _r2_backup(product: StoreProduct) -> None:
+    from app.services import r2_storage
+    filename = _get_image_filename(product)
+    r2_key = f"images/{filename}"
+    r2_orig_key = f"images/originals/{filename}"
+    if r2_storage.exists(r2_key) and not r2_storage.exists(r2_orig_key):
+        data = r2_storage.download(r2_key)
+        if data:
+            r2_storage.upload(r2_orig_key, data, r2_storage.get_content_type(filename))
+            logger.info("R2 backed up original: %s", r2_orig_key)
+
+
+async def _r2_upload(product: StoreProduct, data: bytes) -> None:
+    from app.services import r2_storage
+    filename = _get_image_filename(product)
+    r2_key = f"images/{filename}"
+    r2_storage.upload(r2_key, data, r2_storage.get_content_type(filename))
+    logger.info("R2 uploaded: %s (%d bytes)", r2_key, len(data))
+
+
+def _local_save(img_path: Path, data: bytes) -> None:
+    img_path.write_bytes(data)
 
 
 @router.get("/products/{product_id}", dependencies=[Depends(verify_api_key)])
@@ -378,6 +407,8 @@ async def rotate_product_image(
     session: AsyncSession = Depends(get_session),
 ):
     from PIL import Image
+    from app.services import r2_storage
+    import io
 
     result = await session.execute(
         select(StoreProduct).where(StoreProduct.id == product_id)
@@ -386,17 +417,29 @@ async def rotate_product_image(
     if not product:
         raise HTTPException(404, "Product not found")
 
-    img_path = _get_image_path(product)
-    if not img_path.exists():
-        raise HTTPException(404, "Image file not found on disk")
+    filename = _get_image_filename(product)
+    r2_key = f"images/{filename}"
 
-    _backup_image(img_path)
+    img_bytes = r2_storage.download(r2_key)
+    if img_bytes is None:
+        img_path = _get_image_path(product)
+        if not img_path.exists():
+            raise HTTPException(404, "Image not found")
+        img_bytes = img_path.read_bytes()
 
-    with Image.open(img_path) as img:
+    await _r2_backup(product)
+    _backup_image(_get_image_path(product))
+
+    with Image.open(io.BytesIO(img_bytes)) as img:
         rotated = img.rotate(-body.degrees, expand=True)
-        rotated.save(img_path)
+        buf = io.BytesIO()
+        rotated.save(buf, format=Path(filename).suffix.upper().lstrip(".") or "PNG")
+        result_bytes = buf.getvalue()
 
-    return {"success": True, "degrees": body.degrees, "path": str(img_path.name)}
+    r2_storage.upload(r2_key, result_bytes, r2_storage.get_content_type(filename))
+    _local_save(_get_image_path(product), result_bytes)
+
+    return {"success": True, "degrees": body.degrees, "filename": filename}
 
 
 @router.post("/products/{product_id}/image/crop", dependencies=[Depends(verify_api_key)])
@@ -406,6 +449,8 @@ async def crop_product_image(
     session: AsyncSession = Depends(get_session),
 ):
     from PIL import Image
+    from app.services import r2_storage
+    import io
 
     result = await session.execute(
         select(StoreProduct).where(StoreProduct.id == product_id)
@@ -414,16 +459,28 @@ async def crop_product_image(
     if not product:
         raise HTTPException(404, "Product not found")
 
-    img_path = _get_image_path(product)
-    if not img_path.exists():
-        raise HTTPException(404, "Image file not found on disk")
+    filename = _get_image_filename(product)
+    r2_key = f"images/{filename}"
 
-    _backup_image(img_path)
+    img_bytes = r2_storage.download(r2_key)
+    if img_bytes is None:
+        img_path = _get_image_path(product)
+        if not img_path.exists():
+            raise HTTPException(404, "Image not found")
+        img_bytes = img_path.read_bytes()
 
-    with Image.open(img_path) as img:
+    await _r2_backup(product)
+    _backup_image(_get_image_path(product))
+
+    with Image.open(io.BytesIO(img_bytes)) as img:
         box = (body.x, body.y, body.x + body.width, body.y + body.height)
         cropped = img.crop(box)
-        cropped.save(img_path)
+        buf = io.BytesIO()
+        cropped.save(buf, format=Path(filename).suffix.upper().lstrip(".") or "PNG")
+        result_bytes = buf.getvalue()
+
+    r2_storage.upload(r2_key, result_bytes, r2_storage.get_content_type(filename))
+    _local_save(_get_image_path(product), result_bytes)
 
     return {"success": True, "crop": {"x": body.x, "y": body.y, "w": body.width, "h": body.height}}
 
@@ -434,8 +491,8 @@ async def inpaint_product_image(
     body: InpaintRequest,
     session: AsyncSession = Depends(get_session),
 ):
-    import base64
     import httpx
+    from app.services import r2_storage
 
     result = await session.execute(
         select(StoreProduct).where(StoreProduct.id == product_id)
@@ -444,19 +501,23 @@ async def inpaint_product_image(
     if not product:
         raise HTTPException(404, "Product not found")
 
-    img_path = _get_image_path(product)
-    if not img_path.exists():
-        raise HTTPException(404, "Image file not found on disk")
+    filename = _get_image_filename(product)
+    r2_key = f"images/{filename}"
 
-    _backup_image(img_path)
+    img_bytes = r2_storage.download(r2_key)
+    if img_bytes is None:
+        img_path = _get_image_path(product)
+        if not img_path.exists():
+            raise HTTPException(404, "Image not found")
+        img_bytes = img_path.read_bytes()
 
-    # Read image as base64
-    img_bytes = img_path.read_bytes()
-    ext = img_path.suffix.lower().lstrip(".")
+    await _r2_backup(product)
+    _backup_image(_get_image_path(product))
+
+    ext = Path(filename).suffix.lower().lstrip(".")
     mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, "image/png")
     img_b64 = base64.b64encode(img_bytes).decode()
 
-    # Call 9router inpainting API
     router_url = os.environ.get("INPAINT_URL", "http://localhost:20131/v1/images/generations")
     router_key = os.environ.get("INPAINT_KEY", "")
 
@@ -481,19 +542,20 @@ async def inpaint_product_image(
     if "data" not in data or not data["data"]:
         raise HTTPException(502, "Inpainting returned no result")
 
-    # Save result
     item = data["data"][0]
     if "b64_json" in item:
         result_bytes = base64.b64decode(item["b64_json"])
-        img_path.write_bytes(result_bytes)
     elif "url" in item:
         async with httpx.AsyncClient(timeout=30.0) as client:
             img_resp = await client.get(item["url"])
-            img_path.write_bytes(img_resp.content)
+            result_bytes = img_resp.content
     else:
         raise HTTPException(502, "Inpainting returned unexpected format")
 
-    return {"success": True, "path": str(img_path.name)}
+    r2_storage.upload(r2_key, result_bytes, r2_storage.get_content_type(filename))
+    _local_save(_get_image_path(product), result_bytes)
+
+    return {"success": True, "filename": filename}
 
 
 @router.post("/products/{product_id}/image/restore", dependencies=[Depends(verify_api_key)])
@@ -502,6 +564,7 @@ async def restore_product_image(
     session: AsyncSession = Depends(get_session),
 ):
     import shutil
+    from app.services import r2_storage
 
     result = await session.execute(
         select(StoreProduct).where(StoreProduct.id == product_id)
@@ -510,12 +573,22 @@ async def restore_product_image(
     if not product:
         raise HTTPException(404, "Product not found")
 
+    filename = _get_image_filename(product)
+    r2_key = f"images/{filename}"
+    r2_orig_key = f"images/originals/{filename}"
+
+    r2_orig_data = r2_storage.download(r2_orig_key)
+    if r2_orig_data:
+        r2_storage.upload(r2_key, r2_orig_data, r2_storage.get_content_type(filename))
+        _local_save(_get_image_path(product), r2_orig_data)
+        return {"success": True, "restored": filename, "source": "r2"}
+
     img_path = _get_image_path(product)
     originals = img_path.parent / "originals"
     backup = originals / img_path.name
 
-    if not backup.exists():
-        raise HTTPException(404, "No original backup found for this image")
+    if backup.exists():
+        shutil.copy2(backup, img_path)
+        return {"success": True, "restored": filename, "source": "local"}
 
-    shutil.copy2(backup, img_path)
-    return {"success": True, "restored": str(img_path.name)}
+    raise HTTPException(404, "No original backup found for this image")

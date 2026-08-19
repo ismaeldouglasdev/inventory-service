@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     lama_model_path: str = "/home/ismael/lama-onnx/lama_fp32.onnx"
     lama_threads: int = 2          # threads de inferência (i3-3220T 2C/4T)
 
+    # ── Cloudflare R2 (image storage) ────────────────────────────────
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = ""
+    r2_public_url: str = ""  # auto-generated if empty
+
     # ── AI / LLM ────────────────────────────────────────────────────────
     ai_api_url: str = ""
     ai_api_key: str = ""
