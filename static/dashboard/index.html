@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0f1420">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="OSPOS Dashboard">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
+<title>Dashboard OSPOS</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f1420;color:#e6e9f0;min-height:100vh;padding:14px 14px 80px}
+header{position:sticky;top:0;z-index:10;background:rgba(15,20,32,.95);backdrop-filter:blur(12px);border-bottom:1px solid #2a3344;margin:-14px -14px 14px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between}
+h1{font-size:17px;font-weight:600}
+.badge{min-width:20px;height:20px;padding:0 6px;background:#e74c3c;color:#fff;font-size:11px;font-weight:700;line-height:20px;border-radius:10px;text-align:center;display:none}
+select{appearance:none;background:#1a2130;color:#e6e9f0;border:1px solid #2a3344;border-radius:8px;padding:8px 28px 8px 10px;font-size:13px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238a93a6' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.card{background:#1a2130;border:1px solid #2a3344;border-radius:10px;padding:12px 14px;display:flex;align-items:flex-start;gap:10px}
+.card.primary{border-color:#2ecc71;box-shadow:0 4px 16px rgba(46,204,113,.1)}
+.card.warning{border-color:#f39c12;box-shadow:0 4px 16px rgba(243,156,18,.1)}
+.icon{font-size:18px;flex-shrink:0}
+.info{flex:1;min-width:0}
+.label{font-size:11px;color:#8a93a6;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.value{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;font-family:"SF Mono","Fira Code",monospace;line-height:1.2}
+.sub{font-size:11px;color:#5b6478;margin-top:2px;font-family:"SF Mono","Fira Code",monospace}
+.section-title{font-size:12px;font-weight:600;color:#8a93a6;text-transform:uppercase;letter-spacing:.05em;margin:18px 0 8px}
+.chart{height:120px;background:#1a2130;border:1px solid #2a3344;border-radius:10px;position:relative}
+.list{display:flex;flex-direction:column;gap:8px}
+.item{background:#1a2130;border:1px solid #2a3344;border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px}
+.item.loading{color:#5b6478;font-size:13px;justify-content:center;min-height:48px}
+.rank{font-size:11px;font-weight:700;color:#5b6478;width:22px;text-align:center;font-family:"SF Mono","Fira Code",monospace}
+.rank.gold{color:#f1c40f}.rank.silver{color:#bdc3c7}.rank.bronze{color:#cd7f32}
+.item-info{flex:1;min-width:0}
+.item-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-meta{font-size:10px;color:#5b6478;margin-top:2px;display:flex;gap:10px;font-family:"SF Mono","Fira Code",monospace}
+.item-value{font-size:13px;font-weight:700;color:#2ecc71;font-family:"SF Mono","Fira Code",monospace;white-space:nowrap}
+.alert-item{background:#1a2130;border:1px solid #2a3344;border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px}
+.alert-dot{width:8px;height:8px;border-radius:50%;background:#e74c3c;box-shadow:0 0 8px #e74c3c;flex-shrink:0}
+.alert-dot.irregular{background:#f39c12;box-shadow:0 0 8px #f39c12}
+.alert-info{flex:1;min-width:0}
+.alert-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.alert-detail{font-size:10px;color:#5b6478;margin-top:2px;font-family:"SF Mono","Fira Code",monospace}
+.alert-qty{font-size:13px;font-weight:700;color:#e74c3c;font-family:"SF Mono","Fira Code",monospace}
+.alert-qty.irregular{color:#f39c12}
+.status-bar{position:fixed;bottom:0;left:0;right:0;height:56px;background:rgba(15,20,32,.95);backdrop-filter:blur(12px);border-top:1px solid #2a3344;padding:0 14px;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#5b6478;font-family:"SF Mono","Fira Code",monospace;z-index:100}
+.ws-dot{width:8px;height:8px;border-radius:50%;background:#5b6478}
+.ws-dot.connected{background:#2ecc71;box-shadow:0 0 8px #2ecc71;animation:blink 1.5s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+.empty{text-align:center;color:#5b6478;font-size:13px;margin-top:40px}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important}}
+@supports (padding-bottom:env(safe-area-inset-bottom)){body{padding-bottom:calc(80px + env(safe-area-inset-bottom))}.status-bar{padding-bottom:env(safe-area-inset-bottom)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Dashboard</h1>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="badge" id="alertBadge" style="display:none">0</span>
+    <select id="periodSel">
+      <option value="today">Hoje</option>
+      <option value="yesterday">Ontem</option>
+      <option value="week">Esta semana</option>
+      <option value="month">Este mês</option>
+      <option value="custom">Personalizado</option>
+    </select>
+  </div>
+</header>
+
+<div id="customRange" style="display:none;margin-bottom:14px;padding:0 14px">
+  <div style="display:flex;gap:8px;align-items:center">
+    <input type="date" id="startDate" style="flex:1;background:#1a2130;color:#e6e9f0;border:1px solid #2a3344;border-radius:8px;padding:8px 10px;font-size:13px">
+    <span style="color:#5b6478">a</span>
+    <input type="date" id="endDate" style="flex:1;background:#1a2130;color:#e6e9f0;border:1px solid #2a3344;border-radius:8px;padding:8px 10px;font-size:13px">
+  </div>
+</div>
+
+<div class="grid">
+  <article class="card primary">
+    <div class="icon">💰</div>
+    <div class="info">
+      <div class="label">Faturamento</div>
+      <div class="value" id="salesTotal">R$ 0,00</div>
+      <div class="sub" id="targetPct">Meta: 0%</div>
+    </div>
+  </article>
+  <article class="card">
+    <div class="icon">🧾</div>
+    <div class="info">
+      <div class="label">Vendas</div>
+      <div class="value" id="transactions">0</div>
+      <div class="sub" id="avgTicket">Ticket médio: R$ 0,00</div>
+    </div>
+  </article>
+  <article class="card">
+    <div class="icon">📦</div>
+    <div class="info">
+      <div class="label">Itens vendidos</div>
+      <div class="value" id="itemsSold">0</div>
+      <div class="sub" id="pendingRec">A receber: R$ 0,00</div>
+    </div>
+  </article>
+  <article class="card warning" id="alertCard" style="display:none">
+    <div class="icon">⚠️</div>
+    <div class="info">
+      <div class="label">Alertas de estoque</div>
+      <div class="value" id="alertCount">0</div>
+      <div class="sub">Toque para ver</div>
+    </div>
+  </article>
+</div>
+
+<div class="section-title">Vendas por hora</div>
+<canvas class="chart" id="hourlyChart" aria-label="Gráfico de vendas por hora"></canvas>
+
+<div class="section-title">Mais vendidos <span id="topPeriod" style="font-weight:400;color:#5b6478">(esta semana)</span></div>
+<div class="list" id="topList"><div class="item loading">Carregando…</div></div>
+
+<div class="section-title" id="alertsTitle" style="display:none">Alertas de estoque</div>
+<div class="list" id="alertsList" style="display:none"><div class="item loading">Carregando…</div></div>
+
+<div class="status-bar">
+  <span id="lastUpdate">Atualizado: —</span>
+  <span class="ws-dot" id="wsDot" title="WebSocket desconectado"></span>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  const API = '/v1/dashboard';
+  const WS_URL = 'ws'+(location.protocol==='https:'?'s':'')+'://'+location.host+API+'/ws';
+  const CACHE_KEY = 'dashboard_cache';
+  const CACHE_TTL = 5*60*1000;
+
+  const $ = (sel) => document.querySelector(sel);
+
+  const els = {
+    periodSel: $('#periodSel'),
+    customRange: $('#customRange'),
+    startDate: $('#startDate'),
+    endDate: $('#endDate'),
+    alertBadge: $('#alertBadge'),
+    alertCard: $('#alertCard'),
+    alertsTitle: $('#alertsTitle'),
+    alertsList: $('#alertsList'),
+    salesTotal: $('#salesTotal'),
+    targetPct: $('#targetPct'),
+    transactions: $('#transactions'),
+    avgTicket: $('#avgTicket'),
+    itemsSold: $('#itemsSold'),
+    pendingRec: $('#pendingRec'),
+    alertCount: $('#alertCount'),
+    topPeriod: $('#topPeriod'),
+    topList: $('#topList'),
+    hourlyChart: $('#hourlyChart'),
+    lastUpdate: $('#lastUpdate'),
+    wsDot: $('#wsDot'),
+  };
+
+  let ws = null, reconnectTimer = null, reconnectAttempts = 0;
+  let currentPeriod = 'today', customStart = '', customEnd = '';
+  let lastData = null;
+
+  const fmtMoney = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL',minimumFractionDigits:2}).format(v||0);
+  const fmtNum = v => new Intl.NumberFormat('pt-BR').format(v||0);
+  const fmtTime = iso => new Date(iso).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+
+  function drawChart(hourly, max){
+    const c = els.hourlyChart;
+    const ctx = c.getContext('2d');
+    const dpr = window.devicePixelRatio||1;
+    const rect = c.getBoundingClientRect();
+    c.width = rect.width*dpr; c.height = rect.height*dpr;
+    ctx.scale(dpr,dpr);
+    const w=rect.width, h=rect.height;
+    const pad={t:8,r:8,b:24,l:8}, cw=w-pad.l-pad.r, ch=h-pad.t-pad.b;
+    const bw=cw/24*.7, gap=cw/24-bw, maxV=max||Math.max(...hourly,1);
+    ctx.clearRect(0,0,w,h);
+    ctx.strokeStyle='rgba(138,147,166,.1)'; ctx.lineWidth=1;
+    for(let i=1;i<=4;i++){const y=pad.t+ch/4*i;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke()}
+    hourly.forEach((v,i)=>{
+      const x=pad.l+i*(bw+gap)+gap/2, bh=v/maxV*ch, y=pad.t+ch-bh;
+      const g=ctx.createLinearGradient(0,pad.t+ch,0,pad.t);
+      g.addColorStop(0,'rgba(46,204,113,.3)'); g.addColorStop(1,'rgba(46,204,113,.9)');
+      ctx.fillStyle=g; ctx.fillRect(x,y,bw,bh);
+      ctx.fillStyle='rgba(138,147,166,.6)'; ctx.font='10px "SF Mono",monospace'; ctx.textAlign='center';
+      ctx.fillText(String(i).padStart(2,'0'),x+bw/2,h-pad.b+14);
+      if(v>maxV*.05){ctx.fillStyle='#2ecc71';ctx.font='bold 10px "SF Mono",monospace';ctx.fillText(fmtMoney(v).replace('R$ ',''),x+bw/2,y-4)}
+    });
+    ctx.fillStyle='rgba(138,147,166,.5)';ctx.font='10px "SF Mono",monospace';ctx.textAlign='right';
+    ctx.fillText(fmtMoney(maxV),pad.l-4,pad.t+10);
+  }
+
+  function renderSummary(d){
+    els.salesTotal.textContent = fmtMoney(d.sales_total);
+    els.transactions.textContent = fmtNum(d.transactions);
+    els.itemsSold.textContent = fmtNum(d.items_sold);
+    els.avgTicket.textContent = 'Ticket médio: '+fmtMoney(d.avg_ticket);
+    els.pendingRec.textContent = 'A receber: '+fmtMoney(d.pending_receivables);
+    els.targetPct.textContent = 'Meta: '+d.target_pct+'%';
+    els.targetPct.style.color = d.target_pct>=100?'#2ecc71':d.target_pct>=75?'#f39c12':'#e74c3c';
+    drawChart(d.hourly_sales||[], d.hourly_max||0);
+    const labels={today:'hoje',yesterday:'ontem',week:'esta semana',month:'este mês',custom:'período'};
+    els.topPeriod.textContent = '('+(labels[d.period]||d.period)+')';
+    renderTop(d.top_items||[]);
+    els.lastUpdate.textContent = 'Atualizado: '+fmtTime(new Date().toISOString());
+  }
+
+  function renderTop(items){
+    if(!items.length){els.topList.innerHTML='<div class="item loading">Nenhuma venda no período</div>';return}
+    els.topList.innerHTML = items.map((it,i)=>`<div class="item"><span class="rank ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i+1}</span><div class="item-info"><div class="item-name">${escape(it.name)}</div><div class="item-meta"><span>${fmtNum(it.qty)} un</span><span>${fmtMoney(it.revenue)}</span></div></div><span class="item-value">${fmtMoney(it.revenue)}</span></div>`).join('');
+  }
+
+  function renderAlerts(alerts){
+    const n=alerts.length;
+    els.alertBadge.textContent = n>99?'99+':n;
+    els.alertBadge.style.display = n?'inline-block':'none';
+    els.alertCard.style.display = n?'flex':'none';
+    els.alertCount.textContent = n;
+    if(!n){
+      els.alertsTitle.style.display='none';
+      els.alertsList.style.display='none';
+      return;
+    }
+    els.alertsTitle.style.display='block';
+    els.alertsList.style.display='flex';
+    els.alertsList.innerHTML = alerts.map(a=>{
+      const zero=a.stock_status===1, cls=zero?'':'irregular', lab=zero?'ZERADO':'IRREGULAR';
+      return `<div class="alert-item"><span class="alert-dot ${cls}" title="${lab}"></span><div class="alert-info"><div class="alert-name">${escape(a.name)}</div><div class="alert-detail">${escape(a.item_number)} • Ponto: ${a.reorder_level}</div></div><span class="alert-qty ${cls}">${fmtNum(a.quantity)}</span></div>`;
+    }).join('');
+  }
+
+  function escape(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&','<':'<','>':'>','"':'"',"'":'''}[c]))}
+
+  async function fetchSummary(p,s,e){
+    const q=new URLSearchParams({period:p});
+    if(p==='custom'&&s){q.set('start',s);if(e)q.set('end',e)}
+    const r=await fetch(API+'/summary?'+q,{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return r.json();
+  }
+  async function fetchAlerts(){
+    const r=await fetch(API+'/alerts?limit=20',{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    return r.json();
+  }
+
+  async function load(){
+    try{
+      const [sum,alt]=await Promise.all([fetchSummary(currentPeriod,customStart,customEnd),fetchAlerts()]);
+      lastData={summary:sum,alerts:alt,ts:Date.now()};
+      localStorage.setItem(CACHE_KEY,JSON.stringify(lastData));
+      renderSummary(sum); renderAlerts(alt.alerts||[]);
+    }catch(e){
+      console.error(e); loadCache();
+    }
+  }
+
+  function loadCache(){
+    const c=localStorage.getItem(CACHE_KEY);
+    if(c){try{const d=JSON.parse(c);if(Date.now()-d.ts<CACHE_TTL){renderSummary(d.summary);renderAlerts(d.alerts.alerts||[]);els.lastUpdate.textContent+=' (cache)}}catch{}}
+  }
+
+  function connectWS(){
+    if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
+    ws=new WebSocket(WS_URL);
+    ws.onopen=()=>{reconnectAttempts=0;els.wsDot.classList.add('connected');els.wsDot.title='Conectado'};
+    ws.onmessage=ev=>{try{const m=JSON.parse(ev.data);handleWS(m)}catch{}};
+    ws.onclose=()=>{els.wsDot.classList.remove('connected');els.wsDot.title='Desconectado';scheduleReconnect()};
+  }
+  function handleWS(m){
+    if(m.type==='init'){
+      if(m.summary)renderSummary(m.summary);
+      if(m.alerts)renderAlerts(m.alerts);
+      els.lastUpdate.textContent='Atualizado: '+fmtTime(m.ts)+' (tempo real)';
+    }else if(m.type==='sale'&&lastData){
+      lastData.summary.transactions=m.transactions;
+      lastData.summary.sales_total=m.sales_total;
+      lastData.summary.avg_ticket=m.avg_ticket;
+      renderSummary(lastData.summary);
+      els.lastUpdate.textContent='Atualizado: '+fmtTime(m.ts)+' (tempo real)';
+    }else if(m.type==='stock_alert'){
+      fetchAlerts().then(r=>{renderAlerts(r.alerts||[]);if(lastData)lastData.alerts=r}).catch(()=>{});
+      els.lastUpdate.textContent='Atualizado: '+fmtTime(m.ts)+' (tempo real)';
+    }
+  }
+  function scheduleReconnect(){
+    if(reconnectTimer)clearTimeout(reconnectTimer);
+    const d=Math.min(1000*Math.pow(2,reconnectAttempts),30000)+Math.random()*1000;
+    reconnectAttempts++; reconnectTimer=setTimeout(connectWS,d);
+  }
+  setInterval(()=>{if(ws&&ws.readyState===WebSocket.OPEN)ws.send('ping')},25000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(!ws||ws.readyState!==WebSocket.OPEN))connectWS()});
+
+  els.periodSel.addEventListener('change',()=>{
+    currentPeriod=els.periodSel.value;
+    els.customRange.style.display=currentPeriod==='custom'?'block':'none';
+    if(currentPeriod==='custom'){
+      customStart=els.startDate.value||new Date().toISOString().split('T')[0];
+      customEnd=els.endDate.value||customStart;
+    }
+    load();
+  });
+  els.startDate.addEventListener('change',()=>{customStart=els.startDate.value;if(!customEnd||customEnd<customStart)customEnd=customStart;els.endDate.value=customEnd;load()});
+  els.endDate.addEventListener('change',()=>{customEnd=els.endDate.value;if(customStart>customEnd)customStart=customEnd;els.startDate.value=customStart;load()});
+  els.alertCard.addEventListener('click',()=>{els.alertsTitle.style.display='block';els.alertsList.style.display='flex'});
+
+  const today=new Date().toISOString().split('T')[0];
+  els.startDate.value=els.endDate.value=today;
+  els.startDate.max=els.endDate.max=today;
+
+  // Register Service Worker
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').catch(console.error);
+  }
+
+  loadCache(); load(); connectWS();
+})();
+</script>
+</body>
+</html>

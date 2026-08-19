@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Capturas Recentes</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0f1420; color: #e6e9f0; min-height: 100vh; padding: 14px;
+  }
+  h1 { font-size: 17px; margin-bottom: 4px; }
+  .sub { font-size: 12px; color: #8a93a6; margin-bottom: 14px; }
+  .card {
+    background: #1a2130; border-radius: 10px; padding: 12px 14px;
+    margin-bottom: 10px; display: flex; align-items: center; gap: 12px;
+  }
+  .card.ok { border-left: 4px solid #2ecc71; }
+  .card.fail { border-left: 4px solid #e74c3c; }
+  .icon { font-size: 22px; width: 30px; text-align: center; flex-shrink: 0; }
+  .info { flex: 1; min-width: 0; }
+  .name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta { font-size: 12px; color: #8a93a6; margin-top: 2px; }
+  .time { font-size: 13px; color: #5b6478; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .empty { text-align: center; color: #8a93a6; font-size: 14px; margin-top: 60px; }
+  .status-line { text-align: center; color: #5b6478; font-size: 11px; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <h1>Capturas Recentes</h1>
+  <div class="sub" id="sub">Acompanhe ao vivo as fotos enviadas pela Loja Capture</div>
+  <div id="list"></div>
+  <div class="status-line" id="status"></div>
+
+<script>
+(function () {
+  var LIST = document.getElementById('list');
+  var STATUS = document.getElementById('status');
+  var SUB = document.getElementById('sub');
+  var lastKey = null;
+
+  function fmtTime(ts) {
+    var d = new Date(ts);
+    if (isNaN(d)) return ts ? String(ts).slice(11, 16) : '';
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function render(list) {
+    if (!list.length) {
+      LIST.innerHTML = '<div class="empty">Nenhuma captura ainda.<br>A primeira foto enviada aparece aqui.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      var ok = e.status === 'ok';
+      var name = e.product_name || ('Produto #' + e.product_id);
+      html += '<div class="card ' + (ok ? 'ok' : 'fail') + '">' +
+        '<div class="icon">' + (ok ? '&#10003;' : '&#10007;') + '</div>' +
+        '<div class="info"><div class="name">' + name + '</div>' +
+        '<div class="meta">' + (ok ? 'Foto salva no sistema' : 'Erro ao salvar') +
+        (e.pic_filename ? ' &middot; ' + e.pic_filename : '') + '</div></div>' +
+        '<div class="time">' + fmtTime(e.ts) + '</div></div>';
+    }
+    LIST.innerHTML = html;
+  }
+
+  function poll() {
+    fetch('/v1/store/photos/recent?limit=6', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (list) {
+        render(list);
+        STATUS.textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+        if (list.length) {
+          var key = list[0].ts + '|' + list[0].product_id;
+          if (key !== lastKey) {
+            lastKey = key;
+            SUB.textContent = 'Nova captura: ' + (list[0].product_name || 'produto ' + list[0].product_id);
+            setTimeout(function () {
+              SUB.textContent = 'Acompanhe ao vivo as fotos enviadas pela Loja Capture';
+            }, 4000);
+          }
+        }
+      })
+      .catch(function () {
+        STATUS.textContent = 'Sem conexão com o serviço';
+      });
+  }
+
+  poll();
+  setInterval(poll, 4000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0f1420">
+<title>Remover Etiquetas</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0f1420; color: #e6e9f0; min-height: 100vh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  header {
+    position: sticky; top: 0; z-index: 20; background: #141b29;
+    padding: 12px 14px; border-bottom: 1px solid #232c3d;
+  }
+  header h1 { font-size: 17px; font-weight: 700; }
+  header .sub { font-size: 12px; color: #8a93a6; margin-top: 2px; }
+  header .sub .ok { color: #2ecc71; }
+  header .sub .err { color: #e74c3c; }
+
+  .tabs { display: flex; gap: 8px; margin-top: 10px; }
+  .tab {
+    flex: 1; padding: 8px; text-align: center; font-size: 13px; font-weight: 600;
+    background: #1a2130; color: #8a93a6; border: 0; border-radius: 8px; cursor: pointer;
+  }
+  .tab.active { background: #2ecc71; color: #062b16; }
+
+  #listView { padding: 12px; }
+  .search-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  .search-row input {
+    flex: 1; padding: 10px 12px; border: 1px solid #2a3547; border-radius: 8px;
+    background: #1a2130; color: #e6e9f0; font-size: 14px; outline: none;
+  }
+  .search-row input:focus { border-color: #4d9fff; }
+  .search-row button {
+    padding: 0 16px; border: 0; border-radius: 8px; background: #4d9fff;
+    color: #08203a; font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .cell {
+    position: relative; border: 2px solid transparent; border-radius: 8px;
+    background: #1a2130; overflow: hidden; cursor: pointer; aspect-ratio: 1;
+  }
+  .cell img { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
+  .cell .name {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 5px;
+    background: rgba(0,0,0,.65); font-size: 10px; color: #cbd3e0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cell .badge {
+    position: absolute; top: 4px; right: 4px; font-size: 10px; padding: 2px 5px;
+    border-radius: 8px; font-weight: 700; background: #3b4252; color: #c8cdd6;
+  }
+  .empty { text-align: center; color: #8a93a6; font-size: 14px; margin-top: 50px; }
+  .loading { text-align: center; color: #8a93a6; font-size: 13px; padding: 40px 0; }
+
+  /* Editor */
+  #editView { padding: 12px; }
+  .edit-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .back-btn {
+    padding: 8px 14px; border: 0; border-radius: 8px; background: #3b4252;
+    color: #dbe2ec; font-size: 14px; font-weight: 700; cursor: pointer; flex-shrink: 0;
+  }
+  .edit-title { flex: 1; min-width: 0; }
+  .edit-title .nm { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .edit-title .id { font-size: 12px; color: #8a93a6; }
+  .stage { position: relative; border-radius: 10px; overflow: hidden; background: #000; touch-action: none; }
+  .stage canvas { width: 100%; height: auto; display: block; touch-action: none; }
+  .overlay { position: absolute; top: 0; left: 0; }
+  .hint { font-size: 12px; color: #7d8794; margin: 8px 2px; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  button.action {
+    flex: 1; min-width: 110px; padding: 13px 10px; border: 0; border-radius: 10px;
+    font-size: 14px; font-weight: 700; cursor: pointer; text-align: center;
+  }
+  #btnClean { background: #4d9fff; color: #08203a; }
+  #btnCleanPC { background: #a78bfa; color: #1a1033; }
+  #btnSave { background: #2ecc71; color: #062b16; }
+  #btnSkip { background: #f59e0b; color: #3b2000; }
+  #btnReset { background: #3b4252; color: #dbe2ec; }
+  button.action:disabled { opacity: .4; cursor: not-allowed; }
+  .msg { font-size: 13px; margin-top: 8px; min-height: 18px; }
+  .msg.err { color: #fca5a5; }
+  .msg.ok { color: #86efac; }
+  .msg.info { color: #7d8794; }
+  .pos { position: fixed; right: 10px; bottom: 10px; font-size: 11px; color: #5b6478; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Remover Etiquetas</h1>
+  <div class="sub" id="statusTop">Carregando motor de processamento…</div>
+  <div class="tabs">
+    <button class="tab active" id="tabRecent">Recentes</button>
+    <button class="tab" id="tabSearch">Buscar</button>
+  </div>
+</header>
+
+<div id="listView">
+  <div class="search-row" id="searchRow" style="display:none">
+    <input id="searchInput" type="search" placeholder="Nome do produto ou código" enterkeyhint="search">
+    <button id="searchBtn">Buscar</button>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="emptyBox" style="display:none">Carregando…</div>
+</div>
+
+<div id="editView" style="display:none">
+  <div class="edit-head">
+    <button class="back-btn" id="btnBack">←</button>
+    <div class="edit-title">
+      <div class="nm" id="editName">—</div>
+      <div class="id" id="editId">—</div>
+    </div>
+  </div>
+  <div class="stage">
+    <canvas id="workCanvas" class="work"></canvas>
+    <canvas id="overlayCanvas" class="overlay"></canvas>
+  </div>
+  <div class="hint">Desenhe o retângulo sobre a etiqueta e toque em <b>Remover Etiqueta (PC)</b> — o PC da loja processa com qualidade (a primeira foto demora, as seguintes são rápidas). Alternativa no celular: <b>Remover Etiqueta</b> (mais fraco, só quando o PC estiver longe).</div>
+  <div class="actions">
+    <button class="action" id="btnClean" disabled>Remover Etiqueta</button>
+    <button class="action" id="btnCleanPC" disabled>Remover Etiqueta (PC)</button>
+    <button class="action" id="btnReset" disabled>Refazer</button>
+    <button class="action" id="btnSave" disabled>Salvar no sistema</button>
+    <button class="action" id="btnSkip" style="flex-basis:100%">Pular / sem etiqueta</button>
+  </div>
+  <div class="msg info" id="msg">Desenhe o retângulo na etiqueta.</div>
+</div>
+
+<div class="pos" id="posBadge"></div>
+
+<script>
+(function () {
+  'use strict';
+  var WORK_MAX = 2048;            // resolução máxima de processamento (px no lado maior)
+  var cv = null;                  // módulo OpenCV (após carregar)
+
+  var statusTop = document.getElementById('statusTop');
+  var grid = document.getElementById('grid');
+  var emptyBox = document.getElementById('emptyBox');
+  var listView = document.getElementById('listView');
+  var editView = document.getElementById('editView');
+  var workCanvas = document.getElementById('workCanvas');
+  var overlayCanvas = document.getElementById('overlayCanvas');
+  var wctx = workCanvas.getContext('2d');
+  var octx = overlayCanvas.getContext('2d');
+  var msg = document.getElementById('msg');
+  var btnClean = document.getElementById('btnClean');
+  var btnCleanPC = document.getElementById('btnCleanPC');
+  var btnSave = document.getElementById('btnSave');
+  var btnReset = document.getElementById('btnReset');
+  var posBadge = document.getElementById('posBadge');
+
+  var mode = 'recent';
+  var items = [];                // fila de fotos a revisar
+  var curIdx = -1;               // índice atual em items
+  var originalImg = null;        // HTMLImageElement da foto original
+  var rect = null;               // retângulo em coords do workCanvas
+  var hasResult = false;         // há resultado do inpaint pronto para salvar
+  var dragging = false;
+  var dragStart = null;
+  var busy = false;
+
+  function refreshButtons() {
+    btnClean.disabled = busy || !rect;
+    btnCleanPC.disabled = busy || !rect;
+    btnSave.disabled = busy || !hasResult;
+    btnReset.disabled = busy || (!rect && !hasResult);
+    document.getElementById('btnSkip').disabled = busy;
+  }
+
+  function setStatus(t, cls) { statusTop.innerHTML = t; statusTop.className = 'sub' + (cls ? ' ' + cls : ''); }
+  function setMsg(t, cls) { msg.textContent = t; msg.className = 'msg' + (cls ? ' ' + cls : ''); }
+  function show(v) { listView.style.display = v === 'list' ? '' : 'none'; editView.style.display = v === 'edit' ? '' : 'none'; }
+
+  // ── Carrega o OpenCV (13MB, roda 100% no aparelho) ────────────────────
+  function loadCv() {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = '/static/opencv.js';
+      s.onload = function () {
+        var c = window.cv;
+        if (c && typeof c.then === 'function') c.then(resolve).catch(reject);
+        else resolve(c);
+      };
+      s.onerror = function () { reject(new Error('falha ao baixar opencv.js')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  // ── Lista de fotos ────────────────────────────────────────────────────
+  function fmtTime(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    if (isNaN(d)) return '';
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderGrid(list) {
+    grid.innerHTML = '';
+    if (!list.length) { emptyBox.style.display = ''; emptyBox.textContent = mode === 'recent' ? 'Nenhuma captura recente. Capture fotos com a Loja Capture primeiro.' : 'Nada encontrado.'; return; }
+    emptyBox.style.display = 'none';
+    list.forEach(function (it, i) {
+      var cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.innerHTML = '<img src="' + it.thumb + '" loading="lazy" alt=""><span class="name">' + it.name + '</span>';
+      if (it.badge) cell.innerHTML += '<span class="badge">' + it.badge + '</span>';
+      cell.onclick = function () { openEditor(i); };
+      grid.appendChild(cell);
+    });
+  }
+
+  function loadRecent() {
+    mode = 'recent';
+    setTab();
+    show('list');
+    grid.innerHTML = '<div class="loading">Carregando capturas recentes…</div>';
+    fetch('/v1/store/photos/recent?limit=40', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (list) {
+        items = (list || []).filter(function (e) {
+          return e.status === 'ok' && e.ospos_item_id && e.pic_filename;
+        }).map(function (e) {
+          return {
+            kind: 'recent',
+            name: e.product_name || ('Produto #' + e.product_id),
+            badge: fmtTime(e.ts) || String(e.ospos_item_id),
+            product_id: e.product_id,
+            ospos_item_id: e.ospos_item_id,
+            pic_filename: e.pic_filename,
+            thumb: '/v1/store/ospos-item-images/' + encodeURIComponent(e.pic_filename),
+            url: '/v1/store/ospos-item-images/' + encodeURIComponent(e.pic_filename),
+          };
+        });
+        renderGrid(items);
+      })
+      .catch(function () {
+        grid.innerHTML = '<div class="empty">Sem conexão com o serviço.</div>';
+      });
+  }
+
+  function doSearch() {
+    var q = document.getElementById('searchInput').value.trim();
+    if (!q) { setMsg('Digite um nome ou código.', 'err'); return; }
+    mode = 'search';
+    setTab();
+    show('list');
+    grid.innerHTML = '<div class="loading">Buscando…</div>';
+    fetch('/v1/store/products?search=' + encodeURIComponent(q) + '&has_image=true&per_page=60', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        items = (data.products || []).map(function (p) {
+          return {
+            kind: 'search',
+            name: p.name,
+            badge: p.sku || String(p.id),
+            product_id: p.id,
+            ospos_item_id: null,
+            pic_filename: null,
+            thumb: p.image_url || '',
+            url: p.image_url || '',
+          };
+        });
+        renderGrid(items);
+      })
+      .catch(function () {
+        grid.innerHTML = '<div class="empty">Falha na busca.</div>';
+      });
+  }
+
+  // ── Editor ────────────────────────────────────────────────────────────
+  function openEditor(i) {
+    if (busy || !cv) { setMsg('Aguarde o motor carregar.', 'err'); return; }
+    curIdx = i;
+    var it = items[i];
+    document.getElementById('editName').textContent = it.name;
+    document.getElementById('editId').textContent =
+      it.ospos_item_id ? ('item ' + it.ospos_item_id) : ('produto #' + it.product_id);
+    setMsg('Carregando foto…', 'info');
+    show('edit');
+
+    var img = new Image();
+    img.onload = function () {
+      originalImg = img;
+      setupCanvas();
+      drawOriginal();
+      setMsg('Desenhe o retângulo na etiqueta.', 'info');
+    };
+    img.onerror = function () { setMsg('Não consegui carregar a foto do item.', 'err'); };
+    img.src = it.url;
+  }
+
+  function setupCanvas() {
+    var nw = originalImg.naturalWidth || 0;
+    var nh = originalImg.naturalHeight || 0;
+    var scale = Math.min(1, WORK_MAX / Math.max(nw, nh));
+    var w = Math.round(nw * scale), h = Math.round(nh * scale);
+    workCanvas.width = w; workCanvas.height = h;
+    overlayCanvas.width = w; overlayCanvas.height = h;
+  }
+
+  function drawOriginal() {
+    wctx.drawImage(originalImg, 0, 0, workCanvas.width, workCanvas.height);
+    clearOverlay();
+    rect = null;
+    hasResult = false;
+    refreshButtons();
+  }
+
+  function clearOverlay() { octx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height); }
+
+  function drawRect() {
+    clearOverlay();
+    if (!rect) return;
+    octx.strokeStyle = '#4d9fff';
+    octx.lineWidth = Math.max(2, overlayCanvas.width / 700);
+    octx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    octx.fillStyle = 'rgba(77,159,255,.18)';
+    octx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  }
+
+  // ── Desenho do retângulo (toque + mouse) ──────────────────────────────
+  function evtPos(e) {
+    var r = overlayCanvas.getBoundingClientRect();
+    var pt = (e.touches && e.touches[0]) || e;
+    return {
+      x: (pt.clientX - r.left) / r.width * workCanvas.width,
+      y: (pt.clientY - r.top) / r.height * workCanvas.height,
+    };
+  }
+
+  overlayCanvas.addEventListener('pointerdown', function (e) {
+    if (busy || !rectAllowed()) return;
+    e.preventDefault();
+    dragging = true;
+    dragStart = evtPos(e);
+  });
+  overlayCanvas.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    e.preventDefault();
+    var p = evtPos(e);
+    rect = {
+      x: Math.min(dragStart.x, p.x), y: Math.min(dragStart.y, p.y),
+      w: Math.abs(p.x - dragStart.x), h: Math.abs(p.y - dragStart.y),
+    };
+    drawRect();
+    refreshButtons();
+  });
+  window.addEventListener('pointerup', function () { dragging = false; });
+  window.addEventListener('pointercancel', function () { dragging = false; });
+
+  function rectAllowed() { return editView.style.display !== 'none' && originalImg && !busy; }
+
+  // ── Processamento on-device (OpenCV.js) ───────────────────────────────
+  function inpaint() {
+    if (!rect || busy) return;
+    busy = true;
+    refreshButtons();
+    setMsg('Removendo etiqueta no celular…', 'info');
+    // deixa a mensagem pintar antes do bloqueio síncrono do WASM
+    requestAnimationFrame(function () {
+      try {
+        var imgData = wctx.getImageData(0, 0, workCanvas.width, workCanvas.height);
+        var src = cv.matFromImageData(imgData);
+        var bgr = new cv.Mat();
+        cv.cvtColor(src, bgr, cv.COLOR_RGBA2BGR);
+        var mask = new cv.Mat.zeros(src.rows, src.cols, cv.CV_8UC1);
+        cv.rectangle(mask, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.w, rect.y + rect.h), new cv.Scalar(255), -1);
+        var dst = new cv.Mat();
+        cv.inpaint(bgr, mask, dst, 3, cv.INPAINT_TELEA);
+        var out = new cv.Mat();
+        cv.cvtColor(dst, out, cv.COLOR_BGR2RGBA);
+        wctx.putImageData(new ImageData(new Uint8ClampedArray(out.data), workCanvas.width, workCanvas.height), 0, 0);
+        src.delete(); bgr.delete(); mask.delete(); dst.delete(); out.delete();
+
+        rect = null;
+        hasResult = true;
+        clearOverlay();
+        busy = false;
+        refreshButtons();
+        setMsg('Etiqueta removida. Se necessário, desenhe outro retângulo ou salve.', 'ok');
+      } catch (err) {
+        busy = false;
+        refreshButtons();
+        setMsg('Falha no processamento: ' + (err && err.message || err), 'err');
+      }
+    });
+  }
+
+  // ── Processamento no PC da loja (LaMa/ONNX — qualidade) ─────────────
+  function inpaintPC() {
+    if (!rect || busy) return;
+    busy = true;
+    refreshButtons();
+    setMsg('Processando no PC da loja… a primeira demora um pouco.', 'info');
+
+    var maskCanvas = document.createElement('canvas');
+    maskCanvas.width = workCanvas.width;
+    maskCanvas.height = workCanvas.height;
+    var mctx = maskCanvas.getContext('2d');
+    mctx.fillStyle = '#000';
+    mctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+    mctx.fillStyle = '#fff';
+    mctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+    maskCanvas.toBlob(function (maskBlob) {
+      workCanvas.toBlob(function (fileBlob) {
+        if (!maskBlob || !fileBlob) {
+          busy = false; refreshButtons(); setMsg('Falha ao gerar a imagem.', 'err'); return;
+        }
+        var fd = new FormData();
+        fd.append('file', fileBlob, 'photo.jpg');
+        fd.append('mask', maskBlob, 'mask.png');
+        fetch('/v1/store/photos/lama', { method: 'POST', body: fd })
+          .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+          .then(function (res) {
+            if (!res.ok) throw new Error(res.d.detail || 'erro no processamento');
+            var img = new Image();
+            img.onload = function () {
+              wctx.drawImage(img, 0, 0, workCanvas.width, workCanvas.height);
+              rect = null;
+              hasResult = true;
+              clearOverlay();
+              busy = false;
+              refreshButtons();
+              setMsg('Etiqueta removida pelo PC. Salve ou desenhe outro retângulo.', 'ok');
+            };
+            img.onerror = function () { busy = false; refreshButtons(); setMsg('Falha ao carregar o resultado.', 'err'); };
+            img.src = res.d.data;
+          })
+          .catch(function (e) {
+            busy = false;
+            refreshButtons();
+            setMsg('Erro no PC: ' + e.message, 'err');
+          });
+      }, 'image/jpeg', 0.92);
+    }, 'image/png');
+  }
+
+  function resetPhoto() {
+    if (!originalImg) return;
+    drawOriginal();
+    setMsg('Foto restaurada. Desenhe o retângulo na etiqueta.', 'info');
+  }
+
+  function savePhoto() {
+    if (busy) return;
+    busy = true;
+    refreshButtons();
+    setMsg('Salvando no sistema…', 'info');
+    workCanvas.toBlob(function (blob) {
+      if (!blob) { busy = false; refreshButtons(); setMsg('Falha ao gerar a imagem final.', 'err'); return; }
+      var it = items[curIdx];
+      var fd = new FormData();
+      fd.append('file', blob, 'clean.jpg');
+      var params = [];
+      if (it.ospos_item_id) params.push('item_id=' + it.ospos_item_id);
+      if (it.product_id) params.push('product_id=' + it.product_id);
+      fetch('/v1/store/photos/clean' + (params.length ? '?' + params.join('&') : ''), {
+        method: 'POST', body: fd,
+      })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.d.detail || 'erro ao salvar');
+          setMsg('Salvo! Foto do item ' + res.d.item_id + ' atualizada. ' + (res.d.pic_filename || ''), 'ok');
+          setTimeout(next, 900);
+        })
+        .catch(function (e) {
+          busy = false;
+          refreshButtons();
+          setMsg('Erro ao salvar: ' + e.message, 'err');
+        });
+    }, 'image/jpeg', 0.92);
+  }
+
+  function next() {
+    busy = false;
+    var j = curIdx + 1;
+    if (j >= items.length) {
+      setMsg('Fim da lista.', 'ok');
+      show('list');
+      if (mode === 'recent') loadRecent(); else doSearch();
+      return;
+    }
+    openEditor(j);
+  }
+
+  function skipPhoto() {
+    setMsg('Pulada.', 'info');
+    setTimeout(next, 250);
+  }
+
+  // ── Tabs ──────────────────────────────────────────────────────────────
+  function setTab() {
+    document.getElementById('tabRecent').className = 'tab' + (mode === 'recent' ? ' active' : '');
+    document.getElementById('tabSearch').className = 'tab' + (mode === 'search' ? ' active' : '');
+    document.getElementById('searchRow').style.display = mode === 'search' ? '' : 'none';
+  }
+
+  document.getElementById('tabRecent').onclick = function () { if (mode !== 'recent') loadRecent(); };
+  document.getElementById('tabSearch').onclick = function () { mode = 'search'; setTab(); show('list'); grid.innerHTML = ''; emptyBox.style.display = ''; emptyBox.textContent = 'Digite um nome ou código acima.'; };
+  document.getElementById('searchBtn').onclick = doSearch;
+  document.getElementById('searchInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(); });
+
+  document.getElementById('btnBack').onclick = function () {
+    busy = false;
+    show('list');
+    if (mode === 'recent') loadRecent(); else doSearch();
+  };
+  btnClean.onclick = inpaint;
+  btnCleanPC.onclick = inpaintPC;
+  btnReset.onclick = resetPhoto;
+  btnSave.onclick = savePhoto;
+  document.getElementById('btnSkip').onclick = skipPhoto;
+
+  // ── boot ──────────────────────────────────────────────────────────────
+  loadCv().then(function (m) {
+    cv = m;
+    setStatus('Motor de processamento pronto — roda no celular. <span class="ok">✓</span>');
+    loadRecent();
+  }).catch(function (e) {
+    setStatus('Falha ao carregar o motor: ' + e.message, 'err');
+  });
+
+  setInterval(function () {
+    if (cv) posBadge.textContent = workCanvas.width + '×' + workCanvas.height;
+  }, 3000);
+})();
+</script>
+</body>
+</html>

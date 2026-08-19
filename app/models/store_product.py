@@ -28,6 +28,9 @@ class StoreProduct(Base):
     stock: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     store_visible: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    last_modified: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     last_sync_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True

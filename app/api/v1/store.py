@@ -10,19 +10,22 @@ from __future__ import annotations
 
 import logging
 import math
+import grp
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Optional
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.config import settings
 from app.database import get_session
 from app.models.store_product import StoreProduct
 from app.services.store_sync import StoreSync
@@ -38,6 +41,49 @@ IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+# ── Photo upload history (real-time feedback) ─────────────────────────────
+PHOTO_LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "photo_uploads.jsonl"
+
+
+def _log_photo_event(event: dict[str, Any]) -> None:
+    """Append one JSON line per photo upload (bounded tail read later)."""
+    import json
+    from datetime import datetime
+
+    event["ts"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        with open(PHOTO_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception as exc:  # pragma: no cover
+        logger.warning("photo event log append failed: %s", exc)
+
+
+def _recent_photos(limit: int = 8) -> list[dict[str, Any]]:
+    """Return the last ``limit`` photo upload events, newest first."""
+    import json
+
+    events: list[dict[str, Any]] = []
+    try:
+        with open(PHOTO_LOG_PATH, "r", encoding="utf-8") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 65536))
+            if f.tell() > 0:
+                f.readline()
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    except FileNotFoundError:
+        return []
+    except OSError as exc:  # pragma: no cover
+        logger.warning("photo event log read failed: %s", exc)
+        return []
+    return list(reversed(events[-limit:]))
 
 # ── Global sync service reference ────────────────────────────────────────
 _store_sync: StoreSync | None = None
@@ -258,6 +304,90 @@ async def serve_product_image(filename: str) -> Any:
     return FileResponse(str(filepath), media_type=media_type)
 
 
+@router.get("/ospos-item-images/{filename:path}")
+async def serve_ospos_item_image(filename: str) -> Any:
+    """Serve an item photo directly from the OSPOS uploads dir.
+
+    Lets another PC on the LAN pull photos written back to OSPOS
+    (``public/uploads/item_pics/{item_id}{ext}``) over HTTP.
+    """
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    filepath = Path(settings.ospos_uploads_dir) / filename
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    ext = filepath.suffix.lower()
+    media_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    return FileResponse(str(filepath), media_type=media_types.get(ext, "application/octet-stream"))
+
+
+@router.get("/sync-total", response_model_exclude_none=True)
+async def sync_total(
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    include_deleted: bool = Query(False),
+    since: Optional[str] = Query(
+        None, description="YYYY-MM-DD HH:MM:SS — get only items with last_modified >= since"
+    ),
+    response: Response = None,
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Full product sync for another PC to consume.
+
+    Returns the entire OSPOS product catalog (paginated) with name, code,
+    prices, stock, photo filename, last_modified, etc. Use ``limit``/``offset``
+    to page through the whole catalog; read the ``X-Total-Count`` response
+    header to know the total.
+
+    The returned ``image_url`` points at ``/v1/store/ospos-item-images/{pic}``
+    so the consumer can download the photo over HTTP.
+
+    Light & stateless — no sync, no dedupe, no side effects.
+    """
+    from app.services import ospos_client
+
+    rows, total = await ospos_client.fetch_items_total(
+        limit=limit, offset=offset, include_deleted=include_deleted, since=since
+    )
+
+    items = []
+    for r in rows:
+        pic = r.get("pic_filename")
+        last_mod = r.get("last_modified")
+        if hasattr(last_mod, "isoformat"):
+            last_mod = last_mod.isoformat(timespec="seconds")
+        last_mod = str(last_mod) if last_mod else None
+        items.append({
+            "item_id": r["item_id"],
+            "sku": r["item_number"],
+            "name": r["name"],
+            "category": r["category"],
+            "description": r["description"],
+            "cost_price": float(r["cost_price"]) if r["cost_price"] is not None else None,
+            "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            "stock": int(r["stock"]) if float(r["stock"] or 0) == int(float(r["stock"] or 0)) else float(r["stock"]),
+            "image_url": f"/v1/store/ospos-item-images/{pic}" if pic else None,
+            "pic_filename": pic,
+            "last_modified": last_mod,
+            "deleted": bool(r["deleted"]),
+        })
+
+    if response is not None:
+        response.headers["X-Total-Count"] = str(total)
+        response.headers["X-Limit"] = str(limit)
+        response.headers["X-Offset"] = str(offset)
+        response.headers["Content-Type"] = "application/json"
+    return items
+
+
 @router.post("/products/{product_id}/image", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
 async def upload_product_image(
     product_id: int,
@@ -348,12 +478,352 @@ async def upload_product_image(
 
     logger.info("Image uploaded for product %d: %s (%d bytes)", product_id, filename, len(contents))
 
+    # ── Write-back to OSPOS (thumbnail + pic_filename) ──────────────
+    # Mirror the image into the OSPOS uploads dir under its item_id
+    # naming (e.g. 3913.png) and update ospos_items.pic_filename so the
+    # OSPOS item grid / sale screens show the photo too.  If the mapped
+    # OSPOS item is deleted, the photo is redirected to the active item
+    # carrying the same barcode instead.
+    from app.services import ospos_client
+
+    ospos_written = None
+    writeback_error = None
+    try:
+        target_id = await ospos_client.resolve_photo_target(product.ospos_id, product.sku)
+        if not target_id:
+            writeback_error = "no active OSPOS item (mapped item deleted)"
+            logger.error(
+                "OSPOS write-back skipped for product %d: no active item "
+                "(mapped item_id=%s barcode=%s)",
+                product_id, product.ospos_id, product.sku,
+            )
+        else:
+            ospos_fname = f"{target_id}{ext}"
+            ospos_uploads = Path(settings.ospos_uploads_dir)
+            ospos_uploads.mkdir(parents=True, exist_ok=True)
+            dest = ospos_uploads / ospos_fname
+
+            # The dest may already exist owned by another user (e.g. www-data
+            # from an OSPOS UI upload).  Unlink first so the copy only needs
+            # write permission on the directory.
+            if dest.exists():
+                dest.unlink()
+            shutil.copy2(filepath, dest)
+            # Group-writable so both OSPOS (www-data) and the service (ismaiel)
+            # can overwrite it later.  The group must be www-data: chmod 664
+            # alone is not enough when the file is created as ismael:ismael.
+            # NOTE: there is no os.chgrp() in Python — use os.chown() with
+            # uid=-1 to keep the owner unchanged.
+            try:
+                os.chown(dest, -1, grp.getgrnam("www-data").gr_gid)
+                os.chmod(dest, 0o664)
+            except OSError:
+                pass
+
+            await ospos_client.set_pic_filename(target_id, ospos_fname)
+
+            ospos_written = ospos_fname
+            logger.info(
+                "OSPOS write-back: product %d → OSPOS item %d pic_filename=%s",
+                product_id, target_id, ospos_fname,
+            )
+    except Exception as exc:
+        writeback_error = str(exc)
+        logger.error("OSPOS write-back failed for product %d: %s", product_id, exc)
+
+    # ── Record + broadcast the photo event (real-time feedback) ──────────
+    event: dict[str, Any] = {
+        "product_id": product_id,
+        "product_name": product.name,
+        "ospos_item_id": target_id if ospos_written else None,
+        "pic_filename": ospos_written,
+        "status": "ok" if ospos_written else "failed",
+        "error": writeback_error,
+    }
+    _log_photo_event(event)
+    await _photo_notifier.broadcast({"type": "photo", **event})
+
     return {
         "success": True,
         "filename": filename,
         "image_url": image_url,
         "background_removed": remove_bg,
+        "ospos_pic_filename": ospos_written,
     }
+
+
+@router.post("/photos/clean", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
+async def clean_product_photo(
+    file: UploadFile = File(...),
+    item_id: Optional[int] = Query(None, description="OSPOS item id — alvo direto"),
+    product_id: Optional[int] = Query(None, description="Store product id — resolve o item via mapeamento"),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Substitui a foto de um item OSPOS pela versão com a etiqueta removida.
+
+    A imagem chega já processada (inpaint feito no próprio celular via
+    OpenCV.js). Aqui só fazemos o write-back: copia para
+    ``uploads/item_pics/{item_id}{ext}`` (chmod/chown www-data), remove o
+    thumb antigo e atualiza ``ospos_items.pic_filename``. Se um produto da
+    loja estiver vinculado ao item, a imagem local da loja
+    (``data/images/product_{id}{ext}``) também é atualizada.
+
+    Um de ``item_id`` ou ``product_id`` é obrigatório (item_id tem prioridade).
+    """
+    from app.services import ospos_client
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Max {MAX_IMAGE_SIZE // (1024 * 1024)} MB.",
+        )
+
+    # ── Resolve o item OSPOS alvo ─────────────────────────────────────
+    product = None
+    if item_id is None and product_id is None:
+        raise HTTPException(status_code=400, detail="Provide item_id or product_id")
+
+    if product_id is not None:
+        result = await session.execute(
+            select(StoreProduct).where(StoreProduct.id == product_id)
+        )
+        product = result.scalar_one_or_none()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        target_id = await ospos_client.resolve_photo_target(product.ospos_id, product.sku)
+        if not target_id:
+            raise HTTPException(
+                status_code=409,
+                detail="No active OSPOS item for this product (mapped item is deleted)",
+            )
+    else:
+        target_id = item_id
+        result = await session.execute(
+            select(StoreProduct).where(StoreProduct.ospos_id == item_id).limit(1)
+        )
+        product = result.scalars().first()
+
+    # ── Grava a foto limpa no OSPOS ───────────────────────────────────
+    ospos_uploads = Path(settings.ospos_uploads_dir)
+    ospos_uploads.mkdir(parents=True, exist_ok=True)
+    fname = f"{target_id}{ext}"
+
+    # Backup da foto atual (qualquer extensão) antes de sobrescrever.
+    try:
+        from datetime import datetime
+        bak_dir = Path(__file__).resolve().parent.parent.parent.parent / "data" / "photo_backups"
+        bak_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for cur in ospos_uploads.glob(f"{target_id}.*"):
+            if cur.suffix.lower() in ALLOWED_EXTENSIONS:
+                shutil.copy2(cur, bak_dir / f"{target_id}_{stamp}{cur.suffix.lower()}")
+                break
+    except OSError as exc:  # pragma: no cover
+        logger.warning("photo backup failed for item %s: %s", target_id, exc)
+
+    # Remove versões antigas com outra extensão e o thumb gerado pelo OSPOS.
+    for old in ospos_uploads.glob(f"{target_id}.*"):
+        if old.suffix.lower() in ALLOWED_EXTENSIONS and old.name != fname:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    for old in ospos_uploads.glob(f"{target_id}_thumb.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+    dest = ospos_uploads / fname
+    if dest.exists():
+        dest.unlink()
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_bytes(contents)
+    os.chown(tmp, -1, grp.getgrnam("www-data").gr_gid)
+    os.chmod(tmp, 0o664)
+    tmp.rename(dest)
+
+    await ospos_client.set_pic_filename(target_id, fname)
+
+    # ── Sincroniza a imagem da loja (se houver produto vinculado) ─────
+    local_image = None
+    if product is not None:
+        try:
+            IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+            new_path = IMAGE_DIR / f"product_{product.id}{ext}"
+            if new_path.exists():
+                new_path.unlink()
+            new_path.write_bytes(contents)
+            os.chmod(new_path, 0o664)
+            for old in ALLOWED_EXTENSIONS:
+                old_path = IMAGE_DIR / f"product_{product.id}{old}"
+                if old_path.exists() and old_path != new_path:
+                    old_path.unlink()
+            product.image_url = f"/v1/store/images/{new_path.name}"
+            product.updated_at = __import__("datetime").datetime.now(__import__("zoneinfo").ZoneInfo("UTC"))
+            await session.commit()
+            local_image = new_path.name
+        except Exception as exc:  # pragma: no cover
+            logger.warning("loja image update failed for product %s: %s", product.id, exc)
+
+    logger.info("Cleaned photo written back: OSPOS item %s → %s (local %s)", target_id, fname, local_image)
+
+    return {
+        "success": True,
+        "item_id": target_id,
+        "pic_filename": fname,
+        "image_url": f"/v1/store/ospos-item-images/{fname}",
+        "store_image": local_image,
+    }
+
+
+# ── LaMa (inpainting local no PC via ONNX) ────────────────────────────────
+
+# Serializa a inferência (1 foto por vez) para não estourar a RAM do PC.
+_lama_lock = asyncio.Lock()
+
+
+@router.post("/photos/lama", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
+async def lama_product_photo(
+    file: UploadFile = File(...),
+    mask: UploadFile = File(...),
+    item_id: Optional[int] = Query(None, description="OSPOS item id"),
+    product_id: Optional[int] = Query(None, description="Store product id"),
+    session: AsyncSession = Depends(get_session),
+) -> Any:
+    """Remove a etiqueta via LaMa (ONNX) rodando local no PC.
+
+    Recebe a foto + máscara (branco = área a remover), roda LaMa com
+    resolução limitada a ``lama_max_side`` (leve, ~1GB) e devolve o
+    resultado em alta resolução como data URI base64 — só a região da
+    máscara é substituída (com borda suavizada), o resto fica idêntico.
+
+    NÃO faz write-back no OSPOS: o app envia o resultado para
+    ``POST /photos/clean`` quando o usuário salvar.
+    """
+    import base64
+    import io
+
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    if not file.filename or not mask.filename:
+        raise HTTPException(status_code=400, detail="file and mask required")
+    if (
+        Path(file.filename).suffix.lower() not in ALLOWED_EXTENSIONS
+        or Path(mask.filename).suffix.lower() not in ALLOWED_EXTENSIONS
+    ):
+        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: jpg, jpeg, png, webp, gif")
+
+    contents = await file.read()
+    mask_bytes = await mask.read()
+    if not contents or not mask_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(contents) > MAX_IMAGE_SIZE or len(mask_bytes) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=400, detail=f"File too large. Max {MAX_IMAGE_SIZE // (1024 * 1024)} MB.")
+
+    try:
+        original = Image.open(io.BytesIO(contents))
+        original.load()
+        original = original.convert("RGB")
+        msk = Image.open(io.BytesIO(mask_bytes)).convert("L")
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=400, detail=f"Invalid image: {exc}")
+
+    # ── Inferência (serializada, em thread) ───────────────────────────
+    from app.services import lama_inpainter
+
+    loop = asyncio.get_running_loop()
+    async with _lama_lock:
+        try:
+            result = await loop.run_in_executor(
+                None, lambda: lama_inpainter.inpaint_pil(original, msk)
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.error("LaMa inference failed: %s", exc)
+            raise HTTPException(status_code=500, detail=f"LaMa inference failed: {exc}")
+
+    # ── Composição em alta resolução (só a região da máscara muda) ────
+    full = result.resize(original.size, Image.LANCZOS)
+    feather = msk.filter(ImageFilter.GaussianBlur(radius=10))
+    m_arr = np.asarray(feather, dtype=np.float32)[..., None] / 255.0
+    o_arr = np.asarray(original, dtype=np.float32)
+    f_arr = np.asarray(full, dtype=np.float32)
+    blended = np.clip(o_arr * (1.0 - m_arr) + f_arr * m_arr, 0, 255).astype(np.uint8)
+    final = Image.fromarray(blended, "RGB")
+
+    buf = io.BytesIO()
+    final.save(buf, "JPEG", quality=92, optimize=True)
+    data_b64 = base64.b64encode(buf.getvalue()).decode()
+    logger.info(
+        "LaMa inpainting done: %sx%s → %sx%s",
+        original.width, original.height, final.width, final.height,
+    )
+    return {
+        "success": True,
+        "width": final.width,
+        "height": final.height,
+        "mime": "image/jpeg",
+        "data": "data:image/jpeg;base64," + data_b64,
+    }
+
+
+# ── Photo upload status (real-time feedback) ──────────────────────────────
+
+
+@router.get("/photos/recent")
+async def recent_photo_uploads(
+    limit: int = Query(8, ge=1, le=50),
+) -> list[dict[str, Any]]:
+    """Last ``limit`` photo upload events, newest first.
+
+    Used by the OSPOS items screen (PC) and the mobile status page to
+    show, in near real time, that a photo captured by the Loja Capture
+    app was saved into the system (write-back to OSPOS done or failed).
+    """
+    return _recent_photos(limit=limit)
+
+
+@router.websocket("/photo/ws")
+async def photo_websocket(websocket: WebSocket) -> None:
+    """Real-time photo-upload notifications for the OSPOS items screen.
+
+    The PC browser connects here; whenever a photo is uploaded via the
+    Loja Capture app, the event is broadcast so the items grid can
+    refresh and show a toast immediately (no polling).
+    """
+    await _photo_notifier.connect(websocket)
+    try:
+        # Send the most recent event immediately on connect (feedback
+        # for uploads that already happened).
+        last = _recent_photos(limit=1)
+        if last:
+            await websocket.send_json({"type": "photo", "last": True, **last[0]})
+
+        # Keep connection alive — listen for client pings
+        while True:
+            try:
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except WebSocketDisconnect:
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await _photo_notifier.disconnect(websocket)
 
 
 # ── Link existing image ───────────────────────────────────────────────────
@@ -511,6 +981,9 @@ class ScanNotifier:
 
 _scan_notifier = ScanNotifier()
 
+# Same connection manager reused for photo-upload events (OSPOS PC screen).
+_photo_notifier = ScanNotifier()
+
 
 @router.websocket("/scan/ws")
 async def scan_websocket(websocket: WebSocket) -> None:
@@ -555,7 +1028,23 @@ async def register_scan(
     result = await session.execute(
         select(StoreProduct).where(StoreProduct.sku == barcode)
     )
-    product = result.scalar_one_or_none()
+    matches = result.scalars().all()
+
+    # When the same barcode exists on multiple products (duplicate SKU),
+    # resolve to the best record.  Candidates whose OSPOS item is deleted
+    # are deprioritized so the photo/scan follows the live product.
+    if matches:
+        if len(matches) == 1:
+            product = matches[0]
+        else:
+            from app.services import ospos_client
+            deleted = await ospos_client.item_deleted_map([m.ospos_id for m in matches])
+            active = [m for m in matches if m.ospos_id in deleted and not deleted[m.ospos_id]]
+
+            from app.services.duplicate_rule import pick_best_duplicate
+            product = pick_best_duplicate(active or list(matches))
+    else:
+        product = None
 
     scan_data = {
         "barcode": barcode,
