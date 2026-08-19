@@ -20,7 +20,9 @@ RUN pip install --no-cache-dir --prefix=/install \
     "pycryptodome>=3.20.0" \
     "prometheus-client>=0.20.0" \
     "python-json-logger>=2.0.7" \
-    "python-multipart>=0.0.9"
+    "python-multipart>=0.0.9" \
+    "boto3>=1.35.0" \
+    "Pillow>=10.0.0"
 
 # =============================================================================
 # Stage 2 — Runtime
