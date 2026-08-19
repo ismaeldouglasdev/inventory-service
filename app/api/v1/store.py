@@ -301,7 +301,15 @@ async def serve_product_image(filename: str) -> Any:
     }
     media_type = media_types.get(ext, "application/octet-stream")
 
-    return FileResponse(str(filepath), media_type=media_type)
+    return FileResponse(
+        str(filepath),
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @router.get("/ospos-item-images/{filename:path}")
