@@ -149,7 +149,7 @@ def _r2_image_url(image_url: str) -> str:
         try:
             from app.services import r2_storage
             key = image_url.removeprefix("/v1/store/images/")
-            return r2_storage.get_public_url(f"images/{key}")
+            return r2_storage.get_public_url(key)
         except Exception:
             pass
     return image_url
@@ -312,7 +312,7 @@ async def serve_product_image(filename: str) -> Any:
     if ".." in filename or "/" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    r2_key = f"images/{filename}"
+    r2_key = filename
     img_bytes = r2_storage.download(r2_key)
 
     if img_bytes is not None:
@@ -519,14 +519,14 @@ async def upload_product_image(
         old_path = IMAGE_DIR / f"product_{product_id}{old_ext}"
         if old_path.exists() and old_path != filepath:
             old_path.unlink()
-        old_r2_key = f"images/product_{product_id}{old_ext}"
-        if old_r2_key != f"images/{filename}":
+        old_r2_key = f"product_{product_id}{old_ext}"
+        if old_r2_key != filename:
             r2_storage.delete(old_r2_key)
 
     with open(filepath, "wb") as f:
         f.write(contents)
 
-    r2_storage.upload(f"images/{filename}", contents, r2_storage.get_content_type(filename))
+    r2_storage.upload(filename, contents, r2_storage.get_content_type(filename))
 
     # ── Update local DB ─────────────────────────────────────────────
     image_url = f"/v1/store/images/{filename}"
@@ -932,7 +932,7 @@ async def link_existing_image(
     shutil.copy2(src, dest)
 
     from app.services import r2_storage
-    r2_storage.upload(f"images/{dest_name}", src.read_bytes(), r2_storage.get_content_type(dest_name))
+    r2_storage.upload(dest_name, src.read_bytes(), r2_storage.get_content_type(dest_name))
 
     image_url = f"/v1/store/images/{dest_name}"
     product.image_url = image_url
