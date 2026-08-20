@@ -143,12 +143,15 @@ def _normalize_cat(name: str) -> str:
 def _r2_image_url(image_url: str) -> str:
     """Rewrite a local /v1/store/images/{key} URL to R2 public URL if configured.
 
-    Falls back to the original URL when R2 is not available.
+    Falls back to the original URL when R2 is not available or any error occurs.
     """
     if image_url and image_url.startswith("/v1/store/images/"):
-        from app.services import r2_storage
-        key = image_url.removeprefix("/v1/store/images/")
-        return r2_storage.get_public_url(f"images/{key}")
+        try:
+            from app.services import r2_storage
+            key = image_url.removeprefix("/v1/store/images/")
+            return r2_storage.get_public_url(f"images/{key}")
+        except Exception:
+            pass
     return image_url
 
 
