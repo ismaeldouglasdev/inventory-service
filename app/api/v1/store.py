@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
@@ -541,6 +542,20 @@ async def upload_product_image(
 
     logger.info("Image uploaded for product %d: %s (%d bytes)", product_id, filename, len(contents))
 
+    # ── R2 upload ──────────────────────────────────────────────────
+    r2_key = None
+    try:
+        from app.services import r2_storage
+        r2_key = f"{product.ospos_id}{ext}"
+        r2_storage.upload(r2_key, contents)
+        image_url = f"/v1/store/images/{r2_key}"
+        product.image_url = image_url
+        product.store_visible = product.stock > 0
+        await session.commit()
+        logger.info("R2 upload: product %d → key %s", product_id, r2_key)
+    except Exception as exc:
+        logger.warning("R2 upload failed for product %d (non-fatal): %s", product_id, exc)
+
     # ── Write-back to OSPOS (thumbnail + pic_filename) ──────────────
     # Mirror the image into the OSPOS uploads dir under its item_id
     # naming (e.g. 3913.png) and update ospos_items.pic_filename so the
@@ -996,6 +1011,158 @@ async def trigger_store_sync(
     except Exception as exc:
         logger.exception("Store sync failed")
         raise HTTPException(status_code=502, detail=f"Sync failed: {exc}") from exc
+
+
+# ── Push Sync (remote PC → this instance) ────────────────────────────────
+
+
+class PushProduct(BaseModel):
+    ospos_id: int
+    sku: str = ""
+    name: str = ""
+    description: str = ""
+    price: float = 0.0
+    category: str = ""
+    stock: int = 0
+    image_url: str | None = None
+    store_visible: bool | None = None
+    last_modified: str | None = None
+
+
+class PushPayload(BaseModel):
+    products: list[PushProduct]
+    api_key: str = ""
+
+
+def _verify_push_key(provided_key: str) -> bool:
+    expected = settings.push_sync_api_key or settings.api_key
+    if not expected:
+        return True
+    return provided_key == expected
+
+
+@router.post("/sync/push")
+async def push_products(
+    payload: PushPayload,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Receive product data pushed from a remote inventory-service instance.
+
+    Used when the store PC (which has OSPOS MySQL access) pushes its
+    synced product data to this Render instance (which has no MySQL access).
+    """
+    if not _verify_push_key(payload.api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    created = 0
+    updated = 0
+    errors = 0
+
+    for item in payload.products:
+        try:
+            result = await session.execute(
+                select(StoreProduct).where(StoreProduct.ospos_id == item.ospos_id)
+            )
+            existing = result.scalar_one_or_none()
+
+            has_image = bool(item.image_url)
+            visible = item.store_visible if item.store_visible is not None else (item.stock > 0 and has_image)
+
+            last_mod = None
+            if item.last_modified:
+                try:
+                    last_mod = datetime.fromisoformat(item.last_modified)
+                except (ValueError, TypeError):
+                    pass
+
+            now = datetime.now(timezone.utc)
+
+            if existing:
+                existing.name = item.name or existing.name
+                existing.description = item.description if item.description is not None else existing.description
+                existing.price = item.price if item.price else existing.price
+                existing.category = item.category or existing.category
+                existing.stock = item.stock
+                existing.sku = item.sku or existing.sku
+                existing.image_url = item.image_url if item.image_url is not None else existing.image_url
+                existing.store_visible = visible
+                existing.last_modified = last_mod or existing.last_modified
+                existing.last_sync_at = now
+                existing.updated_at = now
+                updated += 1
+            else:
+                product = StoreProduct(
+                    ospos_id=item.ospos_id,
+                    sku=item.sku or str(item.ospos_id),
+                    name=item.name,
+                    description=item.description or "",
+                    price=item.price,
+                    category=item.category or "",
+                    stock=item.stock,
+                    image_url=item.image_url,
+                    store_visible=visible,
+                    last_modified=last_mod,
+                    last_sync_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(product)
+                created += 1
+        except Exception as exc:
+            logger.error("Push sync: error upserting ospos_id %d: %s", item.ospos_id, exc)
+            errors += 1
+
+    await session.commit()
+
+    logger.info("Push sync: %d created, %d updated, %d errors", created, updated, errors)
+    return {"status": "ok", "created": created, "updated": updated, "errors": errors}
+
+
+@router.post("/sync/push-image")
+async def push_product_image(
+    ospos_id: int = Query(...),
+    api_key: str = Query(""),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Receive an image pushed from a remote inventory-service instance.
+
+    Saves to R2 and updates the product's image_url.
+    """
+    if not _verify_push_key(api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.ospos_id == ospos_id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail=f"Product ospos_id={ospos_id} not found")
+
+    ext = Path(file.filename or "").suffix.lower() or ".png"
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Invalid file type '{ext}'")
+
+    content = await file.read()
+    if len(content) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large (max 5 MB)")
+
+    r2_key = f"{ospos_id}{ext}"
+    try:
+        from app.services import r2_storage
+        r2_storage.upload(r2_key, content)
+    except Exception as exc:
+        logger.error("Push image: R2 upload failed for ospos_id %d: %s", ospos_id, exc)
+        raise HTTPException(status_code=500, detail=f"R2 upload failed: {exc}") from exc
+
+    image_url = f"/v1/store/images/{r2_key}"
+    product.image_url = image_url
+    product.store_visible = product.stock > 0
+    product.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+
+    logger.info("Push image: ospos_id %d → R2 key %s", ospos_id, r2_key)
+    return {"status": "ok", "product_id": product.id, "r2_key": r2_key}
 
 
 # ── Scan endpoint (barcode → phone) ──────────────────────────────────────

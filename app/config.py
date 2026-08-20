@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     rate_limit_write: int = 10   # requests/min for write endpoints
     rate_limit_admin: int = 20   # requests/min for admin endpoints
 
+    # ── Push Sync (push local data to remote Render instance) ────────
+    push_sync_url: str = ""  # e.g. https://loja-online-82t7.onrender.com
+    push_sync_api_key: str = ""  # falls back to api_key if empty
+
     # ── CDC Agent ─────────────────────────────────────────────────────
     cdc_enabled: bool = True
     cdc_poll_interval: int = 30  # seconds
