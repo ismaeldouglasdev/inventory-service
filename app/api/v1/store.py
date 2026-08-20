@@ -20,7 +20,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -109,14 +109,6 @@ class StoreProductOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    @model_validator(mode="after")
-    def _rewrite_image_url_to_r2(self) -> "StoreProductOut":
-        if self.image_url and self.image_url.startswith("/v1/store/images/"):
-            from app.services import r2_storage
-            key = self.image_url.removeprefix("/v1/store/images/")
-            self.image_url = r2_storage.get_public_url(f"images/{key}")
-        return self
-
 
 class StoreProductsResponse(BaseModel):
     products: list[StoreProductOut]
@@ -146,6 +138,18 @@ def _normalize_cat(name: str) -> str:
     if len(base) > 3 and base.endswith("s"):
         base = base[:-1]
     return base
+
+
+def _r2_image_url(image_url: str) -> str:
+    """Rewrite a local /v1/store/images/{key} URL to R2 public URL if configured.
+
+    Falls back to the original URL when R2 is not available.
+    """
+    if image_url and image_url.startswith("/v1/store/images/"):
+        from app.services import r2_storage
+        key = image_url.removeprefix("/v1/store/images/")
+        return r2_storage.get_public_url(f"images/{key}")
+    return image_url
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────
@@ -219,8 +223,13 @@ async def list_store_products(
     result = await session.execute(query)
     products = result.scalars().all()
 
+    items = [StoreProductOut.model_validate(p) for p in products]
+    for item in items:
+        if item.image_url:
+            item.image_url = _r2_image_url(item.image_url)
+
     return StoreProductsResponse(
-        products=[StoreProductOut.model_validate(p) for p in products],
+        products=items,
         total=total,
         page=page,
         per_page=per_page,
@@ -243,7 +252,10 @@ async def get_store_product(
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    return StoreProductOut.model_validate(product)
+    out = StoreProductOut.model_validate(product)
+    if out.image_url:
+        out.image_url = _r2_image_url(out.image_url)
+    return out
 
 
 @router.get("/categories", response_model=list[StoreCategory], dependencies=[Depends(rate_limit_store)])
