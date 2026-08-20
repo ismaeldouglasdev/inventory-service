@@ -20,7 +20,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -108,6 +108,14 @@ class StoreProductOut(BaseModel):
     image_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def _rewrite_image_url_to_r2(self) -> "StoreProductOut":
+        if self.image_url and self.image_url.startswith("/v1/store/images/"):
+            from app.services import r2_storage
+            key = self.image_url.removeprefix("/v1/store/images/")
+            self.image_url = r2_storage.get_public_url(f"images/{key}")
+        return self
 
 
 class StoreProductsResponse(BaseModel):
