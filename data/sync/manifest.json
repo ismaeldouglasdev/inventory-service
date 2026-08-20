@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
-  "synced_at": "2026-08-16T12:21:41-0300",
+  "synced_at": "2026-08-20T14:15:46-0300",
   "prod_url": "http://192.168.15.6:8000",
   "catalog": {
-    "count": 10130,
-    "sha256": "5f96a35823f90033718b78031fbb5b61b0778567a1be1dd6380ce888acba3993",
+    "count": 10131,
+    "sha256": "f28e94aae034031e147edcce6eaa3e00d7dbd62996cde1aeb4d155e3fc74e214",
     "changed": true
   },
   "metadata": {
     "stats": {
-      "total_products": 10237,
+      "total_products": 10238,
       "visible_products": 105,
       "with_images": 201,
-      "in_stock": 2141,
-      "categories": 95,
+      "in_stock": 2133,
+      "categories": 96,
       "db_size_mb": 0.0,
       "images_count": 0,
       "images_size_mb": 0.0
