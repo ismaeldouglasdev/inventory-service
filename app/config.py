@@ -75,6 +75,14 @@ class Settings(BaseSettings):
     r2_secret_access_key: str = ""
     r2_bucket_name: str = ""
     r2_public_url: str = ""  # auto-generated if empty
+    r2_s3_endpoint: str = ""  # e.g. https://<account_id>.r2.cloudflarestorage.com
+
+    # ── R2 Free-Tier Hard Guardrails ────────────────────────────────
+    # Free tier: 10 GB storage, 1M Class A ops, 10M Class B ops / month
+    # Hard caps at ~90% to prevent accidental overage
+    r2_max_storage_bytes: int = 9_663_676_416  # 9.0 GiB in bytes
+    r2_max_class_a_ops: int = 900_000  # writes/deletes per month
+    r2_max_class_b_ops: int = 9_000_000  # reads per month
 
     # ── AI / LLM ────────────────────────────────────────────────────────
     ai_api_url: str = ""
