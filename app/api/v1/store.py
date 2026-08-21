@@ -361,6 +361,21 @@ async def serve_product_image(filename: str) -> Any:
     )
 
 
+@router.head("/images/{filename:path}")
+async def head_product_image(filename: str) -> Response:
+    """Existence check (used by push-sync skip logic) — no body download."""
+    from app.services import r2_storage
+
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if r2_storage.exists(filename):
+        return Response(status_code=200, headers={"Cache-Control": "no-store"})
+    if (IMAGE_DIR / filename).is_file():
+        return Response(status_code=200, headers={"Cache-Control": "no-store"})
+    raise HTTPException(status_code=404, detail="Image not found")
+
+
 @router.get("/ospos-item-images/{filename:path}")
 async def serve_ospos_item_image(filename: str) -> Any:
     """Serve an item photo directly from the OSPOS uploads dir.
