@@ -402,11 +402,16 @@ class StoreSync:
     def _pic_covers(pic_filename: str | None, image_url: str | None) -> bool:
         """True if the local image already reflects the OSPOS pic_filename.
 
-        Locally-uploaded images (product_*.png managed outside OSPOS) are
-        treated as covered so they don't flap as 'changed' on every diff.
+        - Locally-uploaded images (product_*.png managed outside OSPOS) are
+          treated as covered so they don't flap as 'changed' on every diff.
+        - A pic whose file doesn't exist in IMAGE_DIR is also covered:
+          the sync can't materialize it, so flagging it would churn forever.
+          Once the file shows up on disk, the diff starts catching it again.
         """
         pic = (pic_filename or "").strip()
         if not pic or pic.lower() in ("null", "none"):
+            return True
+        if not (IMAGE_DIR / pic).exists():
             return True
         fname = (image_url or "").rsplit("/", 1)[-1]
         if fname.startswith("product_"):
