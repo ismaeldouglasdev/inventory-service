@@ -61,6 +61,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             stock INTEGER NOT NULL,
             image_url VARCHAR(512),
             store_visible BOOLEAN NOT NULL,
+            last_modified DATETIME,
             last_sync_at DATETIME,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL

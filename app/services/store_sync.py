@@ -132,6 +132,10 @@ class StoreSync:
             self._stats["skipped"],
             self._stats["errors"],
         )
+
+        if settings.push_sync_url:
+            await self._push_to_remote()
+
         return self._stats
 
     async def run_delta(
@@ -191,6 +195,10 @@ class StoreSync:
             self._stats["skipped"],
             self._stats["errors"],
         )
+
+        if settings.push_sync_url:
+            await self._push_to_remote()
+
         return self._stats
 
     # ── Duplicate (barcode) resolution ───────────────────────────────
@@ -428,3 +436,103 @@ class StoreSync:
             )
             session.add(product)
             self._stats["created"] += 1
+
+    # ── Push sync (local → remote Render) ────────────────────────────
+
+    async def _push_to_remote(self) -> None:
+        """Push all local products to the remote Render instance."""
+        import httpx
+
+        url = settings.push_sync_url.rstrip("/")
+        api_key = settings.push_sync_api_key or settings.api_key
+
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(select(StoreProduct))
+                products = result.scalars().all()
+
+            if not products:
+                logger.info("Push sync: no products to push")
+                return
+
+            logger.info("Push sync: pushing %d products to %s", len(products), url)
+
+            batch_size = 100
+            total_created = 0
+            total_updated = 0
+
+            for i in range(0, len(products), batch_size):
+                batch = products[i:i + batch_size]
+                payload = {
+                    "products": [
+                        {
+                            "ospos_id": p.ospos_id,
+                            "sku": p.sku,
+                            "name": p.name,
+                            "description": p.description or "",
+                            "price": p.price,
+                            "category": p.category,
+                            "stock": p.stock,
+                            "image_url": p.image_url,
+                            "store_visible": p.store_visible,
+                            "last_modified": p.last_modified.isoformat() if p.last_modified else None,
+                        }
+                        for p in batch
+                    ],
+                    "api_key": api_key,
+                }
+
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(f"{url}/v1/store/sync/push", json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    total_created += data.get("created", 0)
+                    total_updated += data.get("updated", 0)
+
+            logger.info("Push sync: done — %d created, %d updated on remote", total_created, total_updated)
+
+            await self._push_images_to_remote(url, api_key, products)
+
+        except Exception as exc:
+            logger.warning("Push sync failed (non-fatal): %s", exc)
+
+    async def _push_images_to_remote(
+        self, url: str, api_key: str, products: list
+    ) -> None:
+        """Push local images that aren't on R2 to the remote instance."""
+        import httpx
+
+        pushed = 0
+        for p in products:
+            if not p.image_url:
+                continue
+
+            filename = p.image_url.rsplit("/", 1)[-1]
+            local_path = IMAGE_DIR / filename
+            if not local_path.exists():
+                continue
+
+            if p.image_url.startswith("/v1/store/images/"):
+                try:
+                    from app.services import r2_storage
+                    r2_key = p.image_url.removeprefix("/v1/store/images/")
+                    if r2_storage.exists(r2_key):
+                        continue
+                except Exception:
+                    pass
+
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    with open(local_path, "rb") as f:
+                        resp = await client.post(
+                            f"{url}/v1/store/sync/push-image",
+                            params={"ospos_id": p.ospos_id, "api_key": api_key},
+                            files={"file": (filename, f, "image/png")},
+                        )
+                        resp.raise_for_status()
+                        pushed += 1
+            except Exception as exc:
+                logger.warning("Push image failed for ospos_id %d: %s", p.ospos_id, exc)
+
+        if pushed:
+            logger.info("Push sync: pushed %d images to remote", pushed)

@@ -341,8 +341,8 @@ def _backup_image(img_path: Path) -> None:
 async def _r2_backup(product: StoreProduct) -> None:
     from app.services import r2_storage
     filename = _get_image_filename(product)
-    r2_key = f"images/{filename}"
-    r2_orig_key = f"images/originals/{filename}"
+    r2_key = filename
+    r2_orig_key = f"originals/{filename}"
     if r2_storage.exists(r2_key) and not r2_storage.exists(r2_orig_key):
         data = r2_storage.download(r2_key)
         if data:
@@ -353,7 +353,7 @@ async def _r2_backup(product: StoreProduct) -> None:
 async def _r2_upload(product: StoreProduct, data: bytes) -> None:
     from app.services import r2_storage
     filename = _get_image_filename(product)
-    r2_key = f"images/{filename}"
+    r2_key = filename
     r2_storage.upload(r2_key, data, r2_storage.get_content_type(filename))
     logger.info("R2 uploaded: %s (%d bytes)", r2_key, len(data))
 
@@ -418,7 +418,7 @@ async def rotate_product_image(
         raise HTTPException(404, "Product not found")
 
     filename = _get_image_filename(product)
-    r2_key = f"images/{filename}"
+    r2_key = filename
 
     img_bytes = r2_storage.download(r2_key)
     if img_bytes is None:
@@ -460,7 +460,7 @@ async def crop_product_image(
         raise HTTPException(404, "Product not found")
 
     filename = _get_image_filename(product)
-    r2_key = f"images/{filename}"
+    r2_key = filename
 
     img_bytes = r2_storage.download(r2_key)
     if img_bytes is None:
@@ -502,7 +502,7 @@ async def inpaint_product_image(
         raise HTTPException(404, "Product not found")
 
     filename = _get_image_filename(product)
-    r2_key = f"images/{filename}"
+    r2_key = filename
 
     img_bytes = r2_storage.download(r2_key)
     if img_bytes is None:
@@ -574,8 +574,8 @@ async def restore_product_image(
         raise HTTPException(404, "Product not found")
 
     filename = _get_image_filename(product)
-    r2_key = f"images/{filename}"
-    r2_orig_key = f"images/originals/{filename}"
+    r2_key = filename
+    r2_orig_key = f"originals/{filename}"
 
     r2_orig_data = r2_storage.download(r2_orig_key)
     if r2_orig_data:

@@ -251,5 +251,5 @@ loja-online/
 | Senha admin | `admin123` |
 | Render API Key | `rnd_k9dykRn0ZnQpoluSEf1lAUsBXL9S` |
 | GitHub repo | `ismaeldouglasdev/inventory-service` (público) |
-| 9router Cloudflare | `sk-47cf0a5d2c5c4000-zjk3df-94c6d9ba` (em INPAINT_KEY) |
+| 9router Cloudflare | `REDACTED_KEY_REMOVED` (em INPAINT_KEY) |
 | Render service ID | `srv-da2s5grm8hqs73e9hjo0` |
