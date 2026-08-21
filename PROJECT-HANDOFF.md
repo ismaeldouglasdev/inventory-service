@@ -253,3 +253,31 @@ loja-online/
 | GitHub repo | `ismaeldouglasdev/inventory-service` (público) |
 | 9router Cloudflare | `REDACTED_KEY_REMOVED` (em INPAINT_KEY) |
 | Render service ID | `srv-da2s5grm8hqs73e9hjo0` |
+
+---
+
+## 12. Pendências ativas (21/ago/2026 — p/ agente do outro PC)
+
+### P1 — R2 write AccessDenied no Render (bloqueia fotos novas)
+- Sintoma: `POST /v1/store/sync/push-image` → 500 `R2 upload failed: AccessDenied (PutObject)`.
+- Causa: credenciais R2 do Render são só-leitura (ou expiraram). Leitura OK (imagens servem normal).
+- Fix: dashboard Cloudflare → R2 API Token com **Object Read & Write** → atualizar `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` nas env vars do serviço `srv-da2s5grm8hqs73e9hjo0`.
+- As 130 fotos atuais já estão no R2 (chaves SEM prefixo `images/`) — nada a migrar.
+- Após o fix: capturar uma foto nova no celular e validar `push-image` ponta-a-ponta.
+
+### P2 — Auto-deploy GitHub→Render morto
+- Repo `ismaeldouglasdev/inventory-service` tem ZERO webhooks; último auto-deploy foi 20/ago 23:35.
+- Fix: dashboard Render → Service Settings → Build & Deploy → reconectar GitHub.
+- Enquanto isso, deploy manual: `POST https://api.render.com/v1/services/srv-da2s5grm8hqs73e9hjo0/deploys` (Bearer key na seção 11), body `{"clearCache": "do_not_clear"}`.
+
+### P3 — Push sync já operacional (contexto)
+- Delta a cada 5min detecta mudanças de estoque/preço/nome/foto em itens existentes (diff contra MySQL, não `last_modified`) e empurra SÓ o delta pro Render. Imagens puladas via HEAD no remote; >4MB downscaled (Pillow). Ver `app/services/store_sync.py` (commits `fc7e167`, `1b31e4e`).
+
+### P4 — OSPOS fork: feature addAjax em WIP
+- Commitado em `ade6672f6` (branch `merge-staging`): AJAX add-to-cart (`POST sales/addAjax`), itemSearch estruturado, mudanças em register.php + modern.css (~689 linhas).
+- **NÃO está em prod.** Validar, testar no ambiente de teste e só então deployar.
+
+### P5 — Menores
+- APK do app Android (fix #32 AGENTS.md): reinstalar no celular (re-parear wireless debugging, porta 44507).
+- Consolidar os 3 backups sobrepostos (AGENTS.md #34): `pos-backups/backup.sh` (hora), `backup_ospos.sh` (15min), `backup.sh` (3am).
+- Remover `public/js/checkout.js` do fork (código morto com `<?= ?>` — AGENTS.md #11).
