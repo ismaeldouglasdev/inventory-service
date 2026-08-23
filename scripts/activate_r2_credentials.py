@@ -87,12 +87,14 @@ def verify_new_creds(access_key: str, secret_key: str) -> None:
 
 
 def update_render_env(access_key: str, secret_key: str) -> None:
-    print("[2/4] Atualizando env vars no Render...")
-    api("PUT", "/env-vars", {"envVars": [
-        {"key": "R2_ACCESS_KEY_ID", "value": access_key},
-        {"key": "R2_SECRET_ACCESS_KEY", "value": secret_key},
-    ]})
-    print("      ✅ Credenciais atualizadas")
+    """PUT por-chave (seguro) — NÃO usar o PUT bulk /env-vars: ele substitui
+    TODAS as vars do serviço e apaga qualquer uma que não esteja no payload."""
+    print("[2/4] Atualizando env vars no Render (por-chave)...")
+    for name, value in (("R2_ACCESS_KEY_ID", access_key),
+                        ("R2_SECRET_ACCESS_KEY", secret_key)):
+        api("PUT", f"/env-vars/{name}", {"value": value})
+        print(f"      ✅ {name} atualizada")
+    print("      ℹ️  Render NÃO re-deploya sozinho após env change — deploy manual a seguir")
 
 
 def trigger_deploy_and_wait() -> None:

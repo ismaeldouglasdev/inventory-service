@@ -258,6 +258,8 @@ loja-online/
 
 ## 12. Pendências ativas (21/ago/2026 — p/ agente do outro PC)
 
+> **✅ RESOLVIDAS em 23/ago/2026:** P1 (novo Account API Token Object Read & Write scope `loja-images` criado; env vars atualizadas via API por-chave `PUT /env-vars/{KEY}`; deploy LIVE validado) e P2 (auto-deploy confirmado funcionando). Credenciais persistidas localmente em `~/.cloudflare-r2.env`. Executor reutilizável: `scripts/activate_r2_credentials.py`. O token antigo (`calm-art-8536`, sem bucket escopado) pode ser deletado no dashboard.
+
 ### P1 — R2 write AccessDenied no Render (bloqueia fotos novas)
 - Sintoma: `POST /v1/store/sync/push-image` → 500 `R2 upload failed: AccessDenied (PutObject)`.
 - Causa: credenciais R2 do Render são só-leitura (ou expiraram). Leitura OK (imagens servem normal).
