@@ -281,3 +281,14 @@ loja-online/
 - APK do app Android (fix #32 AGENTS.md): reinstalar no celular (re-parear wireless debugging, porta 44507).
 - Consolidar os 3 backups sobrepostos (AGENTS.md #34): `pos-backups/backup.sh` (hora), `backup_ospos.sh` (15min), `backup.sh` (3am).
 - Remover `public/js/checkout.js` do fork (código morto com `<?= ?>` — AGENTS.md #11).
+
+---
+
+## 13. Progresso 23/ago/2026 (dev PC)
+
+- ✅ P2 auto-deploy: CONFIRMADO funcionando (deploy LIVE 22/ago veio de push automático)
+- ✅ loja-online master: fixes same-origin commitados (`c409ee9`) e pushados
+- ✅ render.yaml: marcadores de conflito de merge removidos (`2ff8a08`)
+- ✅ Reconciliação: `main` = `sync/prod-data` = `6b0a604` (AGENTS.md unificado c/ versão rica)
+- 🔴 P1 R2 REDEFINIDO: token está TOTALMENTE morto (ListObjects TAMBÉM dá AccessDenied — imagens funcionam só via URL pública r2.dev). Ação do usuário: criar R2 API Token "Object Read & Write" scope bucket `loja-images` → passar Access Key ID + Secret p/ atualizar env vars do serviço `srv-da2s5grm8hqs73e9hjo0` via API
+- ⚠️ Vercel (lojaonline-murex): deployment quebrado por design — vercel.json reescreve /v1 para 127.0.0.1:8000 (inútil na edge) e env var documentada é `VITE_API_URL` mas código lê `VITE_API_BASE_URL`. Recomendação: arquivar projeto Vercel ou corrigir env+rewrite+CORS.
