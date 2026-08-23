@@ -475,10 +475,41 @@ dda24c598 feat: product photo thumbnail in sales cart + modal image viewer
 ```
 - **Remote `origin`** aponta para `https://github.com/ismaeldouglasdev/opensourcepos.git` **sem token** (o PAT antigo, já revogado, foi removido do config). Autenticação via `gh auth setup-git` (CLI `gh` logado como `ismaeldouglasdev`).
 
-## Loja-online + Inventory-service
-- 38 produtos vinculados com imagem visíveis via loja-online
+## Loja-online — Elshaday Utilidades (`loja-online/`)
+- **Deploy:** Render (`loja-online-82t7.onrender.com`) — React 19 + Vite 8 + Tailwind 4
+- **Produção:** `http://localhost:5173/` (dev local via Vite proxy)
+- **Nome:** "Elshaday Utilidades" (Layout.tsx, Checkout.tsx WhatsApp msg)
+- **Páginas:** Home (grid + busca + filtros), Detalhe (foto + upload + WhatsApp), Checkout, Captura, Admin
+- **Carrinho:** `localStorage` key `elshaday_utilidades_cart`
+
+### Sync com Render (CRÍTICO)
+O Render **não** conecta ao MySQL local. O `inventory-service` no Render roda `seed_render.py` que lê um `catalog.json` versionado no git (branch `sync/prod-data`). Para manter a loja sincronizada:
+
+**Fluxo automático (cron a cada 30min):**
+1. `sync_render_auto.sh` roda `sync_catalog.py` (lê `/v1/store/sync-total` do inventory-service local)
+2. Copia `catalog.json` + fotos PNG para `data/sync/`
+3. Commit + push para `sync/prod-data`
+4. Render re-deploya automaticamente (seed_render.py recria o SQLite com dados atualizados)
+
+**Scripts:**
+| Script | Função |
+|--------|--------|
+| `scripts/sync_render_auto.sh` | Sync automático (cron, 30min) — catálogo + fotos → git → Render |
+| `scripts/sync_catalog.py` | Gera `catalog.json` + thumbnails WebP (lê API local) |
+| `scripts/seed_render.py` | Roda no Render no boot — popula SQLite a partir de `data/sync/catalog.json` |
+
+**Cron local:**
+```
+*/5 * * * * curl -s -X POST 'http://localhost:8000/v1/store/sync?mode=delta'  # OSPOS → SQLite local
+*/30 * * * * /bin/bash /home/ismael/inventory-service/scripts/sync_render_auto.sh  # SQLite local → Render
+```
+
+**Dados visíveis:** produtos com foto + estoque > 0 + não-deletado. No MySQL local: ~75 itens. No Render: ~75 (varia com estoque).
+
+### Imagens
 - Inventory-service: `POST /v1/store/products/{id}/image/link` + CORS para localhost:8080
-- Imagens em `/home/ismael/inventory-service/data/images/` (product_{id}.jpg/png)
+- Imagens locais: `/home/ismael/inventory-service/data/images/` (product_{id}.jpg/png)
+- Fotos no Render: `data/sync/photos/ospos-item-images/` (copiadas do `uploads/item_pics/` local)
 
 ## App Android — Resumo de Vendas (`ospos-dashboard-app/`)
 Dashboard Android nativo (Kotlin + Jetpack Compose, Material 3) que espelha o dashboard do OSPOS para o dono: totais do dia (por pagamentos), resumo por forma de pagamento, últimos vendas, alertas de estoque e **notificação a cada nova venda** (WS em tempo real).
