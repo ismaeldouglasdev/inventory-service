@@ -8,6 +8,7 @@ Previously queried OSPOS MySQL directly. Now reads from the local
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import grp
@@ -45,6 +46,9 @@ MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 # ── Photo upload history (real-time feedback) ─────────────────────────────
 PHOTO_LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "photo_uploads.jsonl"
+
+# ── Product view analytics (JSONL append-only) ────────────────────────────
+VIEWS_LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "product_views.jsonl"
 
 
 def _log_photo_event(event: dict[str, Any]) -> None:
@@ -260,6 +264,20 @@ async def get_store_product(
     if out.image_url:
         out.image_url = _r2_image_url(out.image_url)
     return out
+
+
+@router.post("/products/{product_id}/view", dependencies=[Depends(rate_limit_store)])
+async def register_product_view(product_id: int) -> dict[str, Any]:
+    """Fire-and-forget view tracking (JSONL append; nunca vaza existência)."""
+    try:
+        with open(VIEWS_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "product_id": product_id,
+            }) + "\n")
+    except Exception as exc:  # pragma: no cover
+        logger.warning("view log append failed: %s", exc)
+    return {"status": "ok"}
 
 
 @router.get("/categories", response_model=list[StoreCategory], dependencies=[Depends(rate_limit_store)])

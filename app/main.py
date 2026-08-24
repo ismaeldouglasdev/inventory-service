@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.utils.metrics import (
@@ -262,6 +262,63 @@ async def download_apk():
     if APK_PATH.exists():
         return FileResponse(str(APK_PATH), media_type="application/vnd.android.package-archive", filename="app-debug.apk")
     return PlainTextResponse("APK not found", status_code=404)
+
+
+# ── SEO (robots.txt + sitemap.xml) ───────────────────────────────────────
+# Registrados ANTES do catch-all da SPA para não serem sombreados.
+SITE_URL = "https://loja-online-82t7.onrender.com"
+SITEMAP_MAX_URLS = 500
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt() -> PlainTextResponse:
+    return PlainTextResponse(
+        f"User-agent: *\nAllow: /\nDisallow: /admin\nSitemap: {SITE_URL}/sitemap.xml\n",
+        media_type="text/plain; charset=utf-8",
+    )
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml() -> Response:
+    """Sitemap com páginas estáticas + produtos visíveis (cap 500)."""
+    from datetime import datetime
+
+    from app.database import get_session
+    from app.models.store_product import StoreProduct
+    from sqlalchemy import select as sa_select
+
+    urls: list[str] = ["/", "/search"]
+    product_entries: list[tuple[int, object]] = []
+
+    try:
+        async for session in get_session():
+            result = await session.execute(
+                sa_select(
+                    StoreProduct.id,
+                    StoreProduct.updated_at,
+                )
+                .where(StoreProduct.store_visible == True)  # noqa: E712
+                .order_by(StoreProduct.updated_at.desc())
+                .limit(SITEMAP_MAX_URLS - len(urls))
+            )
+            product_entries = [(row[0], row[1]) for row in result.fetchall()]
+            break
+    except Exception as exc:
+        logger.warning("sitemap: DB query failed (%s); emitting static-only sitemap", exc)
+
+    today = time.strftime("%Y-%m-%d")
+    body = ['<?xml version="1.0" encoding="UTF-8"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for path in urls:
+        body.append(f"  <url><loc>{SITE_URL}{path}</loc><lastmod>{today}</lastmod></url>")
+    for pid, updated_at in product_entries:
+        lastmod = today
+        if isinstance(updated_at, datetime):
+            lastmod = updated_at.strftime("%Y-%m-%d")
+        body.append(f"  <url><loc>{SITE_URL}/produto/{pid}</loc><lastmod>{lastmod}</lastmod></url>")
+    body.append("</urlset>")
+
+    return Response(content="\n".join(body), media_type="application/xml")
 
 
 # ── Static frontend (loja SPA) ──────────────────────────────────────────

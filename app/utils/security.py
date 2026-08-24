@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import time
 import logging
+import time
+import warnings
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import jwt
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import APIKeyHeader
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import settings
 
@@ -14,6 +17,66 @@ logger = logging.getLogger(__name__)
 
 # ── API Key Auth ─────────────────────────────────────────────
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+# ── Admin JWT Auth ───────────────────────────────────────────
+_admin_bearer = HTTPBearer(auto_error=False)
+JWT_EXPIRES_SECONDS = 86400  # 24h
+
+_ephemeral_jwt_secret: str = ""
+
+
+def get_jwt_secret() -> str:
+    """Resolve the admin JWT signing secret (env-configured or ephemeral).
+
+    A single ephemeral secret is generated per process so that tokens
+    issued by login keep validating until restart. Production MUST set
+    JWT_SECRET — a warning is logged once per process otherwise.
+    """
+    global _ephemeral_jwt_secret
+    if settings.jwt_secret:
+        return settings.jwt_secret
+    if not _ephemeral_jwt_secret:
+        import secrets as _secrets
+
+        _ephemeral_jwt_secret = _secrets.token_urlsafe(48)
+        logger.warning(
+            "JWT_SECRET not configured; using EPHEMERAL per-process secret "
+            "(tokens invalidam a cada restart). Configure JWT_SECRET em produção."
+        )
+    return _ephemeral_jwt_secret
+
+
+def create_admin_token() -> str:
+    """Issue an HS256 admin token (sub=admin, 24h expiry)."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": "admin",
+        "iat": now,
+        "exp": now + timedelta(seconds=JWT_EXPIRES_SECONDS),
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm="HS256")
+
+
+async def verify_admin_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_admin_bearer),
+) -> None:
+    """Require a valid admin Bearer JWT on protected endpoints."""
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Não autorizado",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # PyJWT 2.x emite DeprecationWarning p/ algoritmo inseguro
+            jwt.decode(credentials.credentials, get_jwt_secret(), algorithms=["HS256"])
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessão expirada ou inválida",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 async def verify_api_key(request: Request, api_key: Optional[str] = Depends(api_key_header)) -> None:

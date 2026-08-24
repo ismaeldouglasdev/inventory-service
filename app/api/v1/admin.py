@@ -7,12 +7,13 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +22,12 @@ from app.database import get_session
 from app.models.store_product import StoreProduct
 from app.services.circuit_breaker import CircuitBreaker
 from app.utils.metrics import generate_metrics, db_query_duration
-from app.utils.security import verify_api_key, rate_limit_admin
+from app.utils.security import (
+    verify_admin_auth,
+    verify_api_key,
+    rate_limit_admin,
+    create_admin_token,
+)
 
 # ── Injected references (set by main.py during lifespan) ────────────────
 _registry: AdapterRegistry | None = None
@@ -77,7 +83,32 @@ class AdminProductsResponse(BaseModel):
     total_pages: int
 
 
+class LoginRequest(BaseModel):
+    password: str
+
+
+class RenameCategoryRequest(BaseModel):
+    frm: str = Field(alias="from")
+    to: str
+
+    model_config = {"populate_by_name": True}
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────
+
+
+@router.post("/auth/login", dependencies=[Depends(rate_limit_admin)])
+async def admin_login(body: LoginRequest) -> dict[str, Any]:
+    """Troca a senha do painel por um JWT de 24h."""
+    from app.config import settings
+
+    if body.password != settings.admin_password:
+        raise HTTPException(status_code=401, detail="Senha incorreta")
+    return {
+        "access_token": create_admin_token(),
+        "token_type": "bearer",
+        "expires_in": 86400,
+    }
 
 
 @router.get("/metrics", dependencies=[Depends(verify_api_key), Depends(rate_limit_admin)])
@@ -86,7 +117,7 @@ async def get_metrics():
     return PlainTextResponse(generate_metrics().decode(), media_type="text/plain")
 
 
-@router.get("/stats", response_model=AdminStats, dependencies=[Depends(verify_api_key), Depends(rate_limit_admin)])
+@router.get("/stats", response_model=AdminStats, dependencies=[Depends(verify_admin_auth), Depends(rate_limit_admin)])
 async def get_admin_stats(session: AsyncSession = Depends(get_session)):
     """Store statistics for the admin dashboard."""
     # Product counts
@@ -138,7 +169,7 @@ async def get_admin_stats(session: AsyncSession = Depends(get_session)):
     )
 
 
-@router.get("/products", response_model=AdminProductsResponse, dependencies=[Depends(verify_api_key), Depends(rate_limit_admin)])
+@router.get("/products", response_model=AdminProductsResponse, dependencies=[Depends(verify_admin_auth), Depends(rate_limit_admin)])
 async def list_admin_products(
     page: int = Query(1, ge=1, le=10000),
     per_page: int = Query(50, ge=1, le=200),
@@ -228,7 +259,7 @@ class ImageMapRequest(BaseModel):
     item_id: int
 
 
-@router.post("/images/map", dependencies=[Depends(verify_api_key), Depends(rate_limit_admin)])
+@router.post("/images/map", dependencies=[Depends(verify_admin_auth), Depends(rate_limit_admin)])
 async def map_product_image(
     req: ImageMapRequest,
     session: AsyncSession = Depends(get_session),
@@ -295,6 +326,7 @@ class ProductUpdateRequest(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = None
     store_visible: Optional[bool] = None
+    image_url: Optional[str] = None
 
 
 class RotateRequest(BaseModel):
@@ -362,7 +394,7 @@ def _local_save(img_path: Path, data: bytes) -> None:
     img_path.write_bytes(data)
 
 
-@router.get("/products/{product_id}", dependencies=[Depends(verify_api_key)])
+@router.get("/products/{product_id}", dependencies=[Depends(verify_admin_auth)])
 async def get_admin_product(product_id: int, session: AsyncSession = Depends(get_session)):
     result = await session.execute(
         select(StoreProduct).where(StoreProduct.id == product_id)
@@ -373,7 +405,7 @@ async def get_admin_product(product_id: int, session: AsyncSession = Depends(get
     return ProductDetailOut.model_validate(product)
 
 
-@router.put("/products/{product_id}", dependencies=[Depends(verify_api_key)])
+@router.put("/products/{product_id}", dependencies=[Depends(verify_admin_auth)])
 async def update_admin_product(
     product_id: int,
     body: ProductUpdateRequest,
@@ -400,7 +432,7 @@ async def update_admin_product(
     return ProductDetailOut.model_validate(product)
 
 
-@router.post("/products/{product_id}/image/rotate", dependencies=[Depends(verify_api_key)])
+@router.post("/products/{product_id}/image/rotate", dependencies=[Depends(verify_admin_auth)])
 async def rotate_product_image(
     product_id: int,
     body: RotateRequest,
@@ -442,7 +474,7 @@ async def rotate_product_image(
     return {"success": True, "degrees": body.degrees, "filename": filename}
 
 
-@router.post("/products/{product_id}/image/crop", dependencies=[Depends(verify_api_key)])
+@router.post("/products/{product_id}/image/crop", dependencies=[Depends(verify_admin_auth)])
 async def crop_product_image(
     product_id: int,
     body: CropRequest,
@@ -485,7 +517,7 @@ async def crop_product_image(
     return {"success": True, "crop": {"x": body.x, "y": body.y, "w": body.width, "h": body.height}}
 
 
-@router.post("/products/{product_id}/image/inpaint", dependencies=[Depends(verify_api_key)])
+@router.post("/products/{product_id}/image/inpaint", dependencies=[Depends(verify_admin_auth)])
 async def inpaint_product_image(
     product_id: int,
     body: InpaintRequest,
@@ -558,7 +590,7 @@ async def inpaint_product_image(
     return {"success": True, "filename": filename}
 
 
-@router.post("/products/{product_id}/image/restore", dependencies=[Depends(verify_api_key)])
+@router.post("/products/{product_id}/image/restore", dependencies=[Depends(verify_admin_auth)])
 async def restore_product_image(
     product_id: int,
     session: AsyncSession = Depends(get_session),
@@ -592,3 +624,102 @@ async def restore_product_image(
         return {"success": True, "restored": filename, "source": "local"}
 
     raise HTTPException(404, "No original backup found for this image")
+
+
+@router.post("/categories/rename", dependencies=[Depends(verify_admin_auth), Depends(rate_limit_admin)])
+async def rename_category(body: RenameCategoryRequest, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Renomeia uma categoria em todos os produtos (bulk update)."""
+    if not body.frm.strip() or not body.to.strip():
+        raise HTTPException(422, "Categoria não pode ser vazia")
+    if body.frm == body.to:
+        raise HTTPException(422, "'from' e 'to' devem ser diferentes")
+
+    result = await session.execute(
+        select(StoreProduct).where(StoreProduct.category == body.frm)
+    )
+    products = result.scalars().all()
+    now = datetime.now(timezone.utc)
+    for product in products:
+        product.category = body.to
+        product.updated_at = now
+    await session.commit()
+    logger.info("Category renamed %r → %r (%d products)", body.frm, body.to, len(products))
+    return {"updated": len(products), "from": body.frm, "to": body.to}
+
+
+# ── Analytics (product views — JSONL, sem migration) ─────────────────────
+
+VIEWS_LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "product_views.jsonl"
+
+
+class ProductViewOut(BaseModel):
+    product_id: int
+    name: str
+    views: int
+
+
+class AdminAnalyticsOut(BaseModel):
+    total_views: int
+    unique_products: int
+    views_today: int
+    top: list[ProductViewOut]
+
+
+@router.get("/analytics", response_model=AdminAnalyticsOut, dependencies=[Depends(verify_admin_auth)])
+async def admin_analytics(days: int = Query(30, ge=1, le=365), session: AsyncSession = Depends(get_session)):
+    """Agrega visualizações de produto registradas em data/product_views.jsonl."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    per_product: dict[int, int] = {}
+    total = 0
+    today = 0
+    try:
+        with open(VIEWS_LOG_PATH, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 256 * 1024))
+            blob = f.read().decode("utf-8", errors="ignore")
+            if size > 256 * 1024:
+                blob = blob.split("\n", 1)[-1]
+        for line in blob.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+                ts_raw = str(event.get("ts", ""))
+                ts = datetime.fromisoformat(ts_raw)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if ts < cutoff:
+                    continue
+                pid = int(event.get("product_id", 0))
+            except Exception:
+                continue
+            if pid <= 0:
+                continue
+            per_product[pid] = per_product.get(pid, 0) + 1
+            total += 1
+            if ts.strftime("%Y-%m-%d") == today_str:
+                today += 1
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("analytics read failed: %s", exc)
+
+    top_ids = sorted(per_product.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    top: list[ProductViewOut] = []
+    for pid, count in top_ids:
+        row = await session.execute(
+            select(StoreProduct.name).where(StoreProduct.id == pid)
+        )
+        name = row.scalar_one_or_none()
+        top.append(ProductViewOut(product_id=pid, name=name or f"#{pid}", views=count))
+
+    return AdminAnalyticsOut(
+        total_views=total,
+        unique_products=len(per_product),
+        views_today=today,
+        top=top,
+    )
