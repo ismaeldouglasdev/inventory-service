@@ -22,7 +22,8 @@ RUN pip install --no-cache-dir --prefix=/install \
     "python-json-logger>=2.0.7" \
     "python-multipart>=0.0.9" \
     "boto3>=1.35.0" \
-    "Pillow>=10.0.0"
+    "Pillow>=10.0.0" \
+    "pyjwt>=2.8,<3"
 
 # =============================================================================
 # Stage 2 — Runtime
