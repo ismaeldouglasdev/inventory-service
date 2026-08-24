@@ -292,5 +292,38 @@ loja-online/
 - ✅ loja-online master: fixes same-origin commitados (`c409ee9`) e pushados
 - ✅ render.yaml: marcadores de conflito de merge removidos (`2ff8a08`)
 - ✅ Reconciliação: `main` = `sync/prod-data` = `6b0a604` (AGENTS.md unificado c/ versão rica)
-- 🔴 P1 R2 REDEFINIDO: token está TOTALMENTE morto (ListObjects TAMBÉM dá AccessDenied — imagens funcionam só via URL pública r2.dev). Ação do usuário: criar R2 API Token "Object Read & Write" scope bucket `loja-images` → passar Access Key ID + Secret p/ atualizar env vars do serviço `srv-da2s5grm8hqs73e9hjo0` via API
-- ⚠️ Vercel (lojaonline-murex): deployment quebrado por design — vercel.json reescreve /v1 para 127.0.0.1:8000 (inútil na edge) e env var documentada é `VITE_API_URL` mas código lê `VITE_API_BASE_URL`. Recomendação: arquivar projeto Vercel ou corrigir env+rewrite+CORS.
+- 🔴 P1 R2 REDEFINIDO → **RESOLVIDO em 23-24/ago**: token totalmente morto foi substituído; credenciais novas em `~/.cloudflare-r2.env`; push-image→R2 validado ponta-a-ponta via API (produto 1, PNG teste gravado e servido 200). Orfão: chave `1.png` (73 bytes) no R2 — limpar quando quiser.
+- ⚠️ Vercel (lojaonline-murex): **DEPLOYMENT_NOT_FOUND** (projeto sem deploy ativo). Fix local do vercel.json commitado (`73a7ea4`). Decisão pendente: arquivar OU `vercel login` + redeploy.
+
+---
+
+## 14. Progresso 24/ago/2026 (dev PC) — Segurança + Features
+
+**Deploy LIVE:** commit `13fb0f1` (sync/prod-data). Todos os checks de produção passaram.
+
+### Feito
+1. **🔒 JWT admin (buraco crítico fechado)**: `/v1/admin/*` estava ABERTO (verify_api_key liberava tudo sem API_KEY; frontend mandava Bearer senha que backend ignorava). Agora: `POST /v1/admin/auth/login` emite HS256 24h; todas as rotas admin exigem Bearer. Env vars no Render: `JWT_SECRET` (gerado, não versionado) + `CORS_ORIGINS` restrita (antes `["*"]`).
+   - Senha continua `admin123` (env `ADMIN_PASSWORD`) — trocar quando quiser.
+2. **CORS restrito**: default novo no config.py inclui Render + Vercel + LAN dev.
+3. **SEO**: `GET /robots.txt` (Disallow /admin) + `GET /sitemap.xml` (75 urls, produtos visíveis cap 500) no FastAPI; frontend com meta/OG defaults + per-page via `src/lib/seo.ts`.
+4. **Analytics de views**: `POST /v1/store/products/{id}/view` → `data/product_views.jsonl`; `GET /v1/admin/analytics?days=N`. JSONL é efêmero no Render (zera a cada deploy) — OK pra MVP.
+5. **Categorias**: rename bulk `POST /v1/admin/categories/rename {from,to}`; aba Categorias no admin com filtro e rename inline. Endpoint público `GET /v1/store/categories` já existia (campo `name`, não `category`).
+6. **Frontend admin**: fluxo JWT completo (`admin_token` em sessionStorage, evento global `admin:unauthorized`, fallback same-origin `/v1`), card Visualizações (30d), view tracking once-per-session no ProductDetail.
+7. **Dockerfile**: pyjwt adicionado à lista HARDCODED do pip (o Dockerfile NÃO lê pyproject.toml — causa raiz do primeiro deploy `update_failed`: import crash → health check fail).
+
+### Commits
+- inventory-service `7501955` (feat) + `13fb0f1` (fix Dockerfile)
+- loja-online `73a7ea4` (frontend completo + vercel.json rewrite→Render)
+
+### Armadilhas encontradas
+- **Env var CORS_ORIGINS sobrescreve default do pydantic-settings** — restrição só vale se a env var no Render for atualizada/removida (feito).
+- **Render auto-deploy não disparou no push** desta vez (deploy manual via API funcionou: POST /deploys → 202/201). Monitorar P2.
+- `tsc --noEmit` solto passou num arquivo com JSX quebrado; `tsc -b` (usado pelo build) pegou — sempre validar com o comando do build real.
+- LSP pode reportar erros stale durante edições longas — confiar no tsc/build como gate final.
+
+### Próximos passos sugeridos
+1. Trocar `ADMIN_PASSWORD` no Render (ainda `admin123`)
+2. Testar painel admin no browser pós-JWT (login, categorias, analytics) — validado só por API
+3. Decisão Vercel: arquivar ou recriar
+4. Limpar chave órfã `1.png` no R2 (teste do P1)
+5. Analytics persistente se quiser histórico entre deploys (hoje zera)
