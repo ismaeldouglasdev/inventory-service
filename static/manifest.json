@@ -1,0 +1,14 @@
+{
+  "name": "Estoque",
+  "short_name": "Estoque",
+  "description": "Consulta e edição de estoque do OSPOS no celular",
+  "start_url": "/estoque.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f1420",
+  "theme_color": "#0f1420",
+  "icons": [
+    { "src": "/estoque-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/estoque-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
