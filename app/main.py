@@ -42,6 +42,7 @@ from app.api.v1.shopee import _set_registry as _set_shopee_registry
 from app.api.v1.shopee import router as shopee_router
 from app.api.v1.store import _set_store_sync as _set_store_sync_ref
 from app.api.v1.store import router as store_router
+from app.api.v1.estoque import router as estoque_router
 from app.api.v1.sell import _set_registry as _set_sell_registry
 from app.api.v1.sell import _set_circuit_breaker as _set_sell_cb
 from app.api.v1.sell import router as sell_router
@@ -246,6 +247,7 @@ app.include_router(mercadolivre_router, prefix="/v1")
 app.include_router(woocommerce_router, prefix="/v1")
 app.include_router(shopee_router, prefix="/v1")
 app.include_router(store_router, prefix="/v1")
+app.include_router(estoque_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")
 app.include_router(onboarding_router, prefix="/v1")
 app.include_router(agent_bridge_router, prefix="/v1")

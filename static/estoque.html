@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0f1420">
+<title>Estoque</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0f1420; color: #e6e9f0;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px; background: #141b2b; flex-shrink: 0;
+    border-bottom: 1px solid #232c40;
+  }
+  header h1 { font-size: 18px; font-weight: 700; flex: 1; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #e74c3c; }
+  .dot.on { background: #2ecc71; }
+
+  main { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 70px; }
+  .pane { display: none; padding: 12px 14px; }
+  .pane.active { display: block; }
+
+  /* ── busca ─────────────────────────────── */
+  .searchbox {
+    position: sticky; top: 0; z-index: 5; background: #0f1420; padding-bottom: 10px;
+  }
+  .searchbox input {
+    width: 100%; padding: 12px 14px; font-size: 16px; color: #e6e9f0;
+    background: #1a2130; border: 1px solid #2a3550; border-radius: 10px; outline: none;
+  }
+  .searchbox input:focus { border-color: #3d6dd8; }
+  .result {
+    display: flex; gap: 12px; align-items: center;
+    background: #1a2130; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+    cursor: pointer; border: 1px solid transparent;
+  }
+  .result:active { border-color: #3d6dd8; }
+  .thumb {
+    width: 52px; height: 52px; border-radius: 8px; object-fit: cover; flex-shrink: 0;
+    background: #232c40; display: block;
+  }
+  .thumb.ph { display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .rinfo { flex: 1; min-width: 0; }
+  .rname { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rcode { font-size: 12px; color: #8a93a6; font-family: ui-monospace, monospace; margin-top: 2px; }
+  .rmeta { display: flex; justify-content: space-between; margin-top: 4px; font-size: 13px; }
+  .price { color: #58c98b; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 20px; }
+  .badge.ok { background: #12351f; color: #58c98b; }
+  .badge.zero { background: #3a1518; color: #e07070; }
+  .badge.irr { background: #3a2a12; color: #e0a850; }
+
+  /* ── ficha / forms ─────────────────────── */
+  .photo-wrap { position: relative; width: 132px; margin: 4px auto 14px; }
+  .photo-wrap img, .photo-ph {
+    width: 132px; height: 132px; border-radius: 14px; object-fit: cover; background: #1a2130;
+    border: 1px solid #2a3550; display: flex; align-items: center; justify-content: center;
+    font-size: 40px; color: #4a5570;
+  }
+  .cam {
+    position: absolute; right: -8px; bottom: -8px; width: 44px; height: 44px;
+    border-radius: 50%; background: #3d6dd8; color: #fff; font-size: 19px;
+    border: 3px solid #0f1420; display: flex; align-items: center; justify-content: center;
+  }
+  label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+          color: #8a93a6; margin: 12px 2px 5px; }
+  input.field, textarea.field {
+    width: 100%; padding: 11px 12px; font-size: 16px; color: #e6e9f0;
+    background: #1a2130; border: 1px solid #2a3550; border-radius: 10px; outline: none;
+  }
+  input.field:focus, textarea.field:focus { border-color: #3d6dd8; }
+  textarea.field { min-height: 64px; resize: vertical; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .btn {
+    width: 100%; padding: 13px; font-size: 16px; font-weight: 700; color: #fff;
+    background: #3d6dd8; border: none; border-radius: 10px; margin-top: 18px;
+  }
+  .btn:disabled { opacity: .5; }
+  .btn.green { background: #1f8f4e; }
+  .chk { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: #8a93a6; }
+  .hint { font-size: 12px; color: #5b6478; margin-top: 6px; }
+
+  /* ── atividade ─────────────────────────── */
+  .card {
+    background: #1a2130; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .card.ok { border-left: 4px solid #2ecc71; }
+  .card.fail { border-left: 4px solid #e74c3c; }
+  .icon { font-size: 20px; width: 26px; text-align: center; flex-shrink: 0; }
+  .info { flex: 1; min-width: 0; }
+  .nm { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mt { font-size: 11px; color: #8a93a6; margin-top: 2px; }
+  .tm { font-size: 12px; color: #5b6478; flex-shrink: 0; }
+
+  /* ── toast ─────────────────────────────── */
+  #toast {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 84px;
+    background: #233047; color: #fff; padding: 11px 18px; border-radius: 24px;
+    font-size: 14px; opacity: 0; transition: opacity .25s; pointer-events: none;
+    max-width: 88vw; text-align: center; z-index: 50; border: 1px solid #33415f;
+  }
+  #toast.err { background: #57262b; border-color: #7c3a41; }
+
+  /* ── bottom nav ────────────────────────── */
+  nav {
+    position: fixed; bottom: 0; left: 0; right: 0; height: 60px;
+    background: #141b2b; border-top: 1px solid #232c40;
+    display: flex; z-index: 30;
+  }
+  nav button {
+    flex: 1; background: none; border: none; color: #8a93a6; font-size: 11px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  }
+  nav button span.ic { font-size: 21px; line-height: 1; }
+  nav button.active { color: #6f9bef; font-weight: 600; }
+  .empty { text-align: center; color: #8a93a6; font-size: 14px; margin-top: 60px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Estoque</h1>
+  <div class="dot on" id="dot"></div>
+</header>
+
+<main>
+  <!-- ═══ BUSCAR ═══ -->
+  <section class="pane active" id="pane-busca">
+    <div class="searchbox">
+      <input id="q" type="search" placeholder="Buscar por nome ou código…" autocomplete="off">
+    </div>
+    <div id="results"><div class="empty">Digite para buscar entre os produtos.</div></div>
+  </section>
+
+  <!-- ═══ NOVO ═══ -->
+  <section class="pane" id="pane-novo">
+    <div class="photo-wrap">
+      <div class="photo-ph" id="newPhotoBox">&#128247;</div>
+      <button class="cam" id="newCamBtn" title="Tirar foto">&#128247;</button>
+      <input type="file" id="newFileInput" accept="image/*" capture="environment" hidden>
+    </div>
+    <div class="chk" style="margin-top:0">
+      <input type="checkbox" id="detectBarcode" checked> tentar ler código de barras da foto
+    </div>
+
+    <label>Nome *</label>
+    <input class="field" id="n_name">
+
+    <label>Código de barras / SKU</label>
+    <input class="field" id="n_barcode" inputmode="text" placeholder="opcional">
+
+    <label>Categoria</label>
+    <input class="field" id="n_category" placeholder="ex.: UTILIDADES">
+
+    <div class="row2">
+      <div><label>Preço de venda R$</label><input class="field money" id="n_price" inputmode="decimal"></div>
+      <div><label>Custo R$</label><input class="field money" id="n_cost" inputmode="decimal"></div>
+    </div>
+    <div class="row2">
+      <div><label>Estoque inicial</label><input class="field money" id="n_qty" inputmode="decimal" value="0"></div>
+      <div><label>Estoque mínimo</label><input class="field money" id="n_min" inputmode="decimal" value="0"></div>
+    </div>
+
+    <label>Descrição</label>
+    <textarea class="field" id="n_desc"></textarea>
+
+    <button class="btn green" id="createBtn">CRIAR PRODUTO</button>
+    <div class="hint">O produto nasce direto no OSPOS e aparece na venda em segundos.</div>
+  </section>
+
+  <!-- ═══ ATIVIDADE ═══ -->
+  <section class="pane" id="pane-ativ">
+    <div id="feed"><div class="empty">Carregando…</div></div>
+  </section>
+</main>
+
+<!-- ═══ FICHA (overlay) ═══ -->
+<div id="sheet" style="display:none; position:fixed; inset:0; z-index:40; background:#0f1420; overflow-y:auto;">
+  <header>
+    <button class="cam" id="backBtn" style="position:static;width:36px;height:36px;background:#232c40;border:none;font-size:17px;">&#8592;</button>
+    <h1 id="s_title" style="font-size:16px;">Produto</h1>
+  </header>
+  <div style="padding:14px 16px 90px;">
+    <div class="photo-wrap">
+      <img id="s_photo" alt="">
+      <div class="photo-ph" id="s_photobox" style="display:none">&#128247;</div>
+      <button class="cam" id="s_camBtn" title="Nova foto">&#128247;</button>
+      <input type="file" id="s_fileInput" accept="image/*" capture="environment" hidden>
+    </div>
+    <div class="chk" style="margin-top:0">
+      <input type="checkbox" id="removeBg"> remover fundo (lento)
+    </div>
+
+    <input type="hidden" id="s_id">
+    <label>Nome</label><input class="field" id="s_name">
+    <label>Código de barras / SKU</label><input class="field" id="s_barcode">
+    <label>Categoria</label><input class="field" id="s_category">
+    <div class="row2">
+      <div><label>Preço de venda R$</label><input class="field money" id="s_price" inputmode="decimal"></div>
+      <div><label>Custo R$</label><input class="field money" id="s_cost" inputmode="decimal"></div>
+    </div>
+    <div class="row2">
+      <div><label>Estoque atual</label><input class="field money" id="s_qty" inputmode="decimal"></div>
+      <div><label>Estoque mínimo</label><input class="field money" id="s_min" inputmode="decimal"></div>
+    </div>
+    <label>Descrição</label><textarea class="field" id="s_desc"></textarea>
+
+    <button class="btn" id="saveBtn">SALVAR ALTERAÇÕES</button>
+    <button class="btn green" id="sellLinkBtn" style="background:#233047;">VER NA LOJA ONLINE ↗</button>
+    <div class="hint" id="s_status"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<nav>
+  <button data-pane="busca" class="active"><span class="ic">&#128269;</span>Buscar</button>
+  <button data-pane="novo"><span class="ic">&#10133;</span>Novo</button>
+  <button data-pane="ativ"><span class="ic">&#128203;</span>Fotos</button>
+</nav>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var API = '';  // same origin
+
+  // ── helpers ────────────────────────────────────────────────────────
+  var toastTimer = null;
+  function toast(msg, isErr) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.className = isErr ? 'err' : '';
+    t.style.opacity = 1;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.style.opacity = 0; }, 2600);
+  }
+  function parseMoney(v) {
+    v = String(v || '').trim();
+    if (!v) return 0;
+    var m = v.replace(/\s|R\$|\./g, '').replace(',', '.');
+    var n = parseFloat(m);
+    return isNaN(n) ? 0 : n;
+  }
+  function fmtMoney(n) {
+    return 'R$ ' + Number(n || 0).toFixed(2).replace('.', ',');
+  }
+  function imgURL(pic) {
+    return pic ? (API + '/v1/store/ospos-item-images/' + encodeURIComponent(pic)) : null;
+  }
+  function badge(st, qty) {
+    if (qty <= 0) return '<span class="badge zero">ZERADO</span>';
+    if (st === 2) return '<span class="badge irr">IRREGULAR</span>';
+    return '<span class="badge ok">OK</span>';
+  }
+  function health(on) {
+    $('dot').className = 'dot' + (on ? ' on' : '');
+  }
+
+  // ── tabs ───────────────────────────────────────────────────────────
+  document.querySelectorAll('nav button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('nav button').forEach(function (x) { x.classList.remove('active'); });
+      b.classList.add('active');
+      document.querySelectorAll('.pane').forEach(function (p) { p.classList.remove('active'); });
+      $('pane-' + b.dataset.pane).classList.add('active');
+      if (b.dataset.pane === 'ativ') loadFeed();
+    });
+  });
+
+  // ── busca ──────────────────────────────────────────────────────────
+  var qTimer = null, lastQ = '';
+  $('q').addEventListener('input', function () {
+    clearTimeout(qTimer);
+    var term = this.value.trim();
+    qTimer = setTimeout(function () { doSearch(term); }, 280);
+  });
+  function doSearch(term) {
+    if (!term) { $('results').innerHTML = '<div class="empty">Digite para buscar.</div>'; return; }
+    lastQ = term;
+    fetch(API + '/v1/estoque/search?q=' + encodeURIComponent(term))
+      .then(function (r) { health(true); return r.json(); })
+      .then(function (data) {
+        if (!data.items.length) {
+          $('results').innerHTML =
+            '<div class="empty">Nada encontrado para “' + esc(term) + '”.<br><br>' +
+            'Produto novo sem código? Use a aba <b>➕ Novo</b>.</div>';
+          return;
+        }
+        var html = '';
+        data.items.forEach(function (it) {
+          var src = imgURL(it.pic_filename);
+          html += '<div class="result" data-id="' + it.item_id + '">' +
+            (src ? '<img class="thumb" src="' + src + '" loading="lazy">'
+                 : '<div class="thumb ph">&#128230;</div>') +
+            '<div class="rinfo">' +
+              '<div class="rname">' + esc(it.name) + '</div>' +
+              '<div class="rcode">' + esc(it.item_number || '#' + it.item_id) + '</div>' +
+              '<div class="rmeta"><span class="price">' + fmtMoney(it.unit_price) + '</span>' +
+                badge(it.stock_status, it.quantity) + '</div>' +
+            '</div></div>';
+        });
+        $('results').innerHTML = html;
+        document.querySelectorAll('#results .result').forEach(function (el) {
+          el.addEventListener('click', function () { openSheet(+el.dataset.id); });
+        });
+      })
+      .catch(function () { health(false); toast('Falha na busca — sem conexão?', true); });
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // ── ficha do produto ───────────────────────────────────────────────
+  var current = null;
+  function openSheet(id) {
+    fetch(API + '/v1/estoque/item/' + id)
+      .then(function (r) { return r.json(); })
+      .then(function (it) {
+        current = it;
+        $('s_id').value = it.item_id;
+        $('s_name').value = it.name || '';
+        $('s_barcode').value = it.item_number || '';
+        $('s_category').value = it.category || '';
+        $('s_price').value = it.unit_price ? it.unit_price.toFixed(2) : '';
+        $('s_cost').value = it.cost_price ? it.cost_price.toFixed(2) : '';
+        $('s_qty').value = String(it.quantity);
+        $('s_min').value = String(it.reorder_level);
+        $('s_desc').value = it.description || '';
+        $('s_status').textContent = '';
+        setPhoto(imgURL(it.pic_filename));
+        $('sheet').style.display = 'block';
+        window.scrollTo(0, 0);
+      })
+      .catch(function () { toast('Não consegui abrir o produto.', true); });
+  }
+  function setPhoto(url) {
+    if (url) {
+      $('s_photo').src = url + (url.indexOf('?') > -1 ? '&' : '?') + 't=' + Date.now();
+      $('s_photo').style.display = 'block';
+      $('s_photobox').style.display = 'none';
+    } else {
+      $('s_photo').style.display = 'none';
+      $('s_photobox').style.display = 'flex';
+    }
+  }
+  $('backBtn').addEventListener('click', function () {
+    $('sheet').style.display = 'none';
+    if (lastQ) doSearch(lastQ);   // refresh badges/prices
+  });
+
+  $('saveBtn').addEventListener('click', function () {
+    if (!current) return;
+    var btn = this;
+    btn.disabled = true;
+    var body = {
+      name: $('s_name').value.trim(),
+      item_number: $('s_barcode').value.trim(),
+      category: $('s_category').value.trim(),
+      description: $('s_desc').value,
+      unit_price: parseMoney($('s_price').value),
+      cost_price: parseMoney($('s_cost').value),
+      reorder_level: parseMoney($('s_min').value),
+      quantity: parseMoney($('s_qty').value)
+    };
+    fetch(API + '/v1/estoque/item/' + current.item_id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (res.ok && res.j.success) {
+          toast('✓ Salvo! Alterações já visíveis no OSPOS.');
+          $('s_status').textContent = 'Último salvamento: ' + new Date().toLocaleTimeString('pt-BR');
+        } else {
+          toast(res.j.detail || 'Erro ao salvar.', true);
+        }
+      })
+      .catch(function () { btn.disabled = false; toast('Sem conexão.', true); });
+  });
+
+  $('sellLinkBtn').addEventListener('click', function () {
+    window.open('https://loja-online-82t7.onrender.com/', '_blank');
+  });
+
+  // ── foto (ficha e novo produto compartilham a lógica) ─────────────
+  function bindCamera(btnId, inputId) {
+    $(btnId).addEventListener('click', function () { $(inputId).click(); });
+  }
+  bindCamera('s_camBtn', 's_fileInput');
+  bindCamera('newCamBtn', 'newFileInput');
+
+  function shrinkAndSend(file, itemId, cb) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var MAX = 1600, scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        var cv = document.createElement('canvas');
+        cv.width = Math.round(img.width * scale);
+        cv.height = Math.round(img.height * scale);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        cv.toBlob(function (blob) {
+          if (!blob) { cb(null, 'Falha ao processar a foto.'); return; }
+          var fd = new FormData();
+          fd.append('file', blob, 'foto.jpg');
+          var url = API + '/v1/estoque/item/' + itemId +
+            '/image?remove_bg=' + ($('removeBg').checked ? 'true' : 'false');
+          fetch(url, { method: 'POST', body: fd })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+              if (res.ok && res.j.success) cb(res.j, null);
+              else cb(null, res.j.detail || 'Erro no envio.');
+            })
+            .catch(function () { cb(null, 'Sem conexão.'); });
+        }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () { cb(null, 'Foto ilegível.'); };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  $('s_fileInput').addEventListener('change', function () {
+    var f = this.files[0]; this.value = '';
+    if (!f || !current) return;
+    toast('Enviando foto…');
+    shrinkAndSend(f, current.item_id, function (res, err) {
+      if (err) { toast(err, true); return; }
+      setPhoto(imgURL(res.filename));
+      current.pic_filename = res.filename;
+      toast('✓ Foto salva no sistema!');
+    });
+  });
+
+  // ── novo produto sem código ────────────────────────────────────────
+  var pendingNewPhoto = null;
+  $('newFileInput').addEventListener('change', function () {
+    var f = this.files[0]; this.value = '';
+    if (!f) return;
+    pendingNewPhoto = f;
+    var rd = new FileReader();
+    rd.onload = function () { $('newPhotoBox').innerHTML = '<img src="' + rd.result + '" style="width:100%;height:100%;object-fit:cover;border-radius:14px">'; };
+    rd.readAsDataURL(f);
+
+    // BarcodeDetector: tenta ler código da foto tirada
+    if ($('detectBarcode').checked && 'BarcodeDetector' in window && !$('n_barcode').value) {
+      try {
+        var detector = new BarcodeDetector();
+        createImageBitmap(f).then(function (bmp) {
+          return detector.detect(bmp);
+        }).then(function (codes) {
+          if (codes && codes.length && !$('n_barcode').value) {
+            $('n_barcode').value = codes[0].rawValue;
+            toast('📷 Código lido: ' + codes[0].rawValue);
+          }
+        }).catch(function () {});
+      } catch (e) {}
+    }
+  });
+
+  $('createBtn').addEventListener('click', function () {
+    var btn = this;
+    var name = $('n_name').value.trim();
+    if (!name) { toast('O nome é obrigatório.', true); return; }
+    btn.disabled = true;
+    fetch(API + '/v1/estoque/item', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        item_number: $('n_barcode').value.trim() || null,
+        category: $('n_category').value.trim(),
+        description: $('n_desc').value,
+        unit_price: parseMoney($('n_price').value),
+        cost_price: parseMoney($('n_cost').value),
+        quantity: parseMoney($('n_qty').value),
+        reorder_level: parseMoney($('n_min').value)
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (!res.ok || !res.j.success) {
+          toast(res.j.detail || 'Erro ao criar produto.', true);
+          return;
+        }
+        var newId = res.j.item_id;
+        toast('✓ Produto #' + newId + ' criado!');
+        var finish = function () {
+          ['n_name', 'n_barcode', 'n_category', 'n_price', 'n_cost', 'n_qty', 'n_min', 'n_desc']
+            .forEach(function (id) { $(id).value = (id === 'n_qty' || id === 'n_min') ? '0' : ''; });
+          $('newPhotoBox').innerHTML = '&#128247;';
+          pendingNewPhoto = null;
+          switchTab('busca');
+          $('q').value = name;
+          doSearch(name);
+        };
+        if (pendingNewPhoto) {
+          toast('Enviando foto…');
+          shrinkAndSend(pendingNewPhoto, newId, function (r2, err2) {
+            if (err2) toast('Produto criado, mas a foto falhou: ' + err2, true);
+            else toast('✓ Produto + foto salvos!');
+            finish();
+          });
+        } else finish();
+      })
+      .catch(function () { btn.disabled = false; toast('Sem conexão.', true); });
+  });
+
+  function switchTab(name) {
+    document.querySelector('nav button[data-pane="' + name + '"]').click();
+  }
+
+  // ── feed de fotos ──────────────────────────────────────────────────
+  function loadFeed() {
+    fetch(API + '/v1/store/photos/recent?limit=14')
+      .then(function (r) { health(true); return r.json(); })
+      .then(function (list) {
+        if (!list.length) {
+          $('feed').innerHTML = '<div class="empty">Nenhuma captura ainda.</div>';
+          return;
+        }
+        var html = '';
+        list.forEach(function (e) {
+          var ok = e.status === 'ok';
+          html += '<div class="card ' + (ok ? 'ok' : 'fail') + '">' +
+            '<div class="icon">' + (ok ? '&#10003;' : '&#10007;') + '</div>' +
+            '<div class="info"><div class="nm">' + esc(e.product_name || ('#' + e.product_id)) + '</div>' +
+            '<div class="mt">' + (ok ? ('OSPOS #' + e.ospos_item_id + ' · ' + e.pic_filename)
+                                    : esc(e.error || 'falhou')) + '</div></div>' +
+            '<div class="tm">' + fmtFeedTime(e.ts) + '</div></div>';
+        });
+        $('feed').innerHTML = html;
+      })
+      .catch(function () { health(false); $('feed').innerHTML = '<div class="empty">Sem conexão.</div>'; });
+  }
+  function fmtFeedTime(ts) {
+    var d = new Date(ts);
+    return isNaN(d) ? '' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // heartbeat leve: mantém o dot honesto
+  setInterval(function () {
+    fetch(API + '/v1/health/live', { cache: 'no-store' })
+      .then(function () { health(true); })
+      .catch(function () { health(false); });
+  }, 20000);
+})();
+</script>
+</body>
+</html>

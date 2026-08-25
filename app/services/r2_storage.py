@@ -148,10 +148,13 @@ def get_usage_stats() -> dict:
 def _init_r2() -> bool:
     global _s3_client, _r2_config
 
-    if _s3_client is not None:
-        return True
+    # NOTE: the False check must come FIRST — `False is not None` is True,
+    # so checking `is not None` first made failed init look "ready" and
+    # callers crashed with "'bool' object has no attribute 'put_object'".
     if _s3_client is False:
         return False
+    if _s3_client is not None:
+        return True
 
     account_id = os.environ.get("R2_ACCOUNT_ID", "")
     access_key = os.environ.get("R2_ACCESS_KEY_ID", "")
