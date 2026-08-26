@@ -157,6 +157,17 @@ async def create_item(payload: ItemCreate) -> dict[str, Any]:
                 (item_id, payload.quantity, 0 if payload.quantity > 0 else 1),
             )
 
+            # OSPOS grid does INNER JOIN on inventory — without this row the item is invisible
+            qty = round(payload.quantity, 3)
+            await cur.execute(
+                """
+                INSERT INTO ospos_inventory
+                    (trans_items, trans_user, trans_date, trans_comment, trans_location, trans_inventory)
+                VALUES (%s, 1, NOW(), %s, 1, %s)
+                """,
+                (item_id, f"Criado pelo Estoque (quantidade inicial {qty})", qty),
+            )
+
     logger.info("Estoque: created OSPOS item %d (%s)", item_id, name)
 
     await _item_update_notifier.broadcast({
@@ -210,6 +221,12 @@ async def update_item(item_id: int, payload: ItemUpdate) -> dict[str, Any]:
                 )
             if payload.quantity is not None:
                 new_qty = max(0.0, payload.quantity)
+                # Get old quantity BEFORE updating
+                old_qty_row = await _fetch_one(
+                    "SELECT quantity FROM ospos_item_quantities WHERE item_id = %s AND location_id = 1",
+                    (item_id,),
+                )
+                old_qty = float(old_qty_row[0]) if old_qty_row else 0.0
                 # ZERADO when empty; never auto-clears IRREGULAR (that is a
                 # deliberate state from the receiving flow).
                 await cur.execute(
@@ -222,6 +239,17 @@ async def update_item(item_id: int, payload: ItemUpdate) -> dict[str, Any]:
                     """,
                     (item_id, new_qty, 0 if new_qty > 0 else 1),
                 )
+                diff = round(new_qty - old_qty, 3)
+                if abs(diff) > 0.001:
+                    comment = f"Estoque ajustado pelo Estoque: {old_qty:.3g} → {new_qty:.3g}"
+                    await cur.execute(
+                        """
+                        INSERT INTO ospos_inventory
+                            (trans_items, trans_user, trans_date, trans_comment, trans_location, trans_inventory)
+                        VALUES (%s, 1, NOW(), %s, 1, %s)
+                        """,
+                        (item_id, comment, diff),
+                    )
 
     logger.info("Estoque: updated OSPOS item %d (fields=%s)", item_id, list(fields))
 
