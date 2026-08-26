@@ -435,3 +435,154 @@ def _row_dict(row: tuple) -> dict[str, Any]:
         "quantity": float(row[9] or 0),
         "stock_status": int(row[10] or 0),
     }
+
+
+# ── App settings (PIN, role, schedule, remote lock) ─────────────────────
+
+import hashlib
+import json as _json
+from datetime import datetime as _dt
+
+_SETTINGS_PATH = settings._data_dir if hasattr(settings, '_data_dir') else Path(__file__).resolve().parent.parent.parent / "data"
+_SETTINGS_FILE = _SETTINGS_PATH / "estoque_settings.json"
+
+_DEFAULT_SETTINGS: dict[str, Any] = {
+    "pin_hash": "",           # SHA-256 of 4-digit PIN (empty = no PIN set)
+    "role": "owner",          # "owner" | "employee"
+    "lock_enabled": False,    # remote lock toggle
+    "schedule_enabled": False,
+    "schedule_start": "08:00",
+    "schedule_end": "18:00",
+    "hide_cost": True,        # employee can't see cost_price
+    "hide_totals": True,      # employee can't see total product count
+}
+
+
+def _load_settings() -> dict[str, Any]:
+    if _SETTINGS_FILE.exists():
+        try:
+            data = _json.loads(_SETTINGS_FILE.read_text())
+            merged = {**_DEFAULT_SETTINGS, **data}
+            return merged
+        except Exception:
+            pass
+    return dict(_DEFAULT_SETTINGS)
+
+
+def _save_settings(data: dict[str, Any]) -> None:
+    _SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _SETTINGS_FILE.write_text(_json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def _hash_pin(pin: str) -> str:
+    return hashlib.sha256(pin.encode()).hexdigest()
+
+
+class SettingsUpdate(BaseModel):
+    current_pin: str = ""          # required if PIN is set
+    new_pin: Optional[str] = None  # set/change PIN
+    role: Optional[str] = None     # "owner" | "employee"
+    schedule_enabled: Optional[bool] = None
+    schedule_start: Optional[str] = None
+    schedule_end: Optional[str] = None
+    hide_cost: Optional[bool] = None
+    hide_totals: Optional[bool] = None
+
+
+class LoginRequest(BaseModel):
+    pin: str
+
+
+@router.get("/settings")
+async def get_settings() -> dict[str, Any]:
+    """Return app settings (never expose pin_hash)."""
+    s = _load_settings()
+    has_pin = bool(s.get("pin_hash"))
+    return {
+        "has_pin": has_pin,
+        "role": s.get("role", "owner"),
+        "lock_enabled": s.get("lock_enabled", False),
+        "schedule_enabled": s.get("schedule_enabled", False),
+        "schedule_start": s.get("schedule_start", "08:00"),
+        "schedule_end": s.get("schedule_end", "18:00"),
+        "hide_cost": s.get("hide_cost", True),
+        "hide_totals": s.get("hide_totals", True),
+    }
+
+
+@router.post("/settings/login")
+async def settings_login(body: LoginRequest) -> dict[str, Any]:
+    """Verify PIN and return role. If no PIN is set, always returns owner."""
+    s = _load_settings()
+    pin_hash = s.get("pin_hash", "")
+    if not pin_hash:
+        # No PIN configured — first user becomes owner
+        return {"success": True, "role": "owner", "message": "PIN não configurado. Defina um PIN nas configurações."}
+    if _hash_pin(body.pin) != pin_hash:
+        raise HTTPException(status_code=401, detail="PIN incorreto")
+    return {"success": True, "role": s.get("role", "owner")}
+
+
+@router.post("/settings/lock")
+async def toggle_lock(body: LoginRequest) -> dict[str, Any]:
+    """Owner can lock/unlock the app remotely."""
+    s = _load_settings()
+    pin_hash = s.get("pin_hash", "")
+    if pin_hash and _hash_pin(body.pin) != pin_hash:
+        raise HTTPException(status_code=401, detail="PIN incorreto")
+    s["lock_enabled"] = not s.get("lock_enabled", False)
+    _save_settings(s)
+    logger.info("Estoque: remote lock toggled to %s", s["lock_enabled"])
+    return {"success": True, "lock_enabled": s["lock_enabled"]}
+
+
+@router.patch("/settings")
+async def update_settings(body: SettingsUpdate) -> dict[str, Any]:
+    """Update app settings. Requires current PIN if one is set."""
+    s = _load_settings()
+    pin_hash = s.get("pin_hash", "")
+
+    # Verify current PIN if one exists
+    if pin_hash and body.current_pin and _hash_pin(body.current_pin) != pin_hash:
+        raise HTTPException(status_code=401, detail="PIN atual incorreto")
+    if pin_hash and not body.current_pin:
+        raise HTTPException(status_code=400, detail="PIN atual é obrigatório")
+
+    # Change/set PIN
+    if body.new_pin is not None:
+        if len(body.new_pin) < 4:
+            raise HTTPException(status_code=400, detail="PIN deve ter pelo menos 4 dígitos")
+        s["pin_hash"] = _hash_pin(body.new_pin)
+
+    if body.role is not None:
+        if body.role not in ("owner", "employee"):
+            raise HTTPException(status_code=400, detail="Role deve ser 'owner' ou 'employee'")
+        s["role"] = body.role
+
+    if body.schedule_enabled is not None:
+        s["schedule_enabled"] = body.schedule_enabled
+    if body.schedule_start is not None:
+        s["schedule_start"] = body.schedule_start
+    if body.schedule_end is not None:
+        s["schedule_end"] = body.schedule_end
+    if body.hide_cost is not None:
+        s["hide_cost"] = body.hide_cost
+    if body.hide_totals is not None:
+        s["hide_totals"] = body.hide_totals
+
+    _save_settings(s)
+    logger.info("Estoque: settings updated (role=%s)", s.get("role"))
+    return {"success": True, **get_settings_sync(s)}
+
+
+def get_settings_sync(s: dict) -> dict[str, Any]:
+    return {
+        "has_pin": bool(s.get("pin_hash")),
+        "role": s.get("role", "owner"),
+        "lock_enabled": s.get("lock_enabled", False),
+        "schedule_enabled": s.get("schedule_enabled", False),
+        "schedule_start": s.get("schedule_start", "08:00"),
+        "schedule_end": s.get("schedule_end", "18:00"),
+        "hide_cost": s.get("hide_cost", True),
+        "hide_totals": s.get("hide_totals", True),
+    }
