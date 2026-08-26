@@ -937,6 +937,29 @@ async def photo_websocket(websocket: WebSocket) -> None:
         await _photo_notifier.disconnect(websocket)
 
 
+@router.websocket("/item-update/ws")
+async def item_update_websocket(websocket: WebSocket) -> None:
+    """Real-time item-update notifications for the OSPOS items screen.
+
+    The PC browser connects here; whenever the phone app edits, creates
+    or deletes a product, the event is broadcast so the items grid can
+    refresh and show a toast immediately.
+    """
+    await _item_update_notifier.connect(websocket)
+    try:
+        while True:
+            try:
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except WebSocketDisconnect:
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await _item_update_notifier.disconnect(websocket)
+
+
 # ── Link existing image ───────────────────────────────────────────────────
 
 
@@ -1249,6 +1272,9 @@ _scan_notifier = ScanNotifier()
 
 # Same connection manager reused for photo-upload events (OSPOS PC screen).
 _photo_notifier = ScanNotifier()
+
+# Notifier for item-update events (phone → PC items grid).
+_item_update_notifier = ScanNotifier()
 
 
 @router.websocket("/scan/ws")

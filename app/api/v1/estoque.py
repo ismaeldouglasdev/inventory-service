@@ -32,6 +32,7 @@ from app.api.v1.store import (
     MAX_IMAGE_SIZE,
     _log_photo_event,
     _photo_notifier,
+    _item_update_notifier,
 )
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,14 @@ async def create_item(payload: ItemCreate) -> dict[str, Any]:
             )
 
     logger.info("Estoque: created OSPOS item %d (%s)", item_id, name)
+
+    await _item_update_notifier.broadcast({
+        "type": "item_update",
+        "action": "created",
+        "item_id": item_id,
+        "item_name": name,
+    })
+
     return {"success": True, "item_id": item_id}
 
 
@@ -215,6 +224,16 @@ async def update_item(item_id: int, payload: ItemUpdate) -> dict[str, Any]:
                 )
 
     logger.info("Estoque: updated OSPOS item %d (fields=%s)", item_id, list(fields))
+
+    item_name = (await _fetch_one("SELECT name FROM ospos_items WHERE item_id = %s", (item_id,),)) or [""]
+    await _item_update_notifier.broadcast({
+        "type": "item_update",
+        "action": "updated",
+        "item_id": item_id,
+        "item_name": item_name[0] if isinstance(item_name, (list, tuple)) else item_name,
+        "fields": list(fields.keys()),
+    })
+
     return {"success": True}
 
 
@@ -331,6 +350,14 @@ async def delete_item(item_id: int) -> dict[str, Any]:
                 (item_id,),
             )
     logger.info("Estoque: soft-deleted OSPOS item %d", item_id)
+
+    await _item_update_notifier.broadcast({
+        "type": "item_update",
+        "action": "deleted",
+        "item_id": item_id,
+        "item_name": "",
+    })
+
     return {"success": True}
 
 
