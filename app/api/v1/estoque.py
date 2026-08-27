@@ -18,7 +18,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
 from app.config import settings
@@ -102,12 +102,13 @@ async def get_item(item_id: int) -> dict[str, Any]:
 
 
 @router.post("/item", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
-async def create_item(payload: ItemCreate) -> dict[str, Any]:
+async def create_item(payload: ItemCreate, request: Request) -> dict[str, Any]:
     """Create an OSPOS product — designed for products WITHOUT a barcode.
 
     ``item_number`` is optional; when given it must not collide with an
     existing active item.
     """
+    role = _assert_write_allowed(request)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -177,12 +178,20 @@ async def create_item(payload: ItemCreate) -> dict[str, Any]:
         "item_name": name,
     })
 
+    _audit("created", role, item_id, name=_requester_name(request), detail={
+        "name": name,
+        "item_number": barcode,
+        "unit_price": round(payload.unit_price, 2),
+        "quantity": payload.quantity,
+    })
+
     return {"success": True, "item_id": item_id}
 
 
 @router.patch("/item/{item_id}", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
-async def update_item(item_id: int, payload: ItemUpdate) -> dict[str, Any]:
+async def update_item(item_id: int, payload: ItemUpdate, request: Request) -> dict[str, Any]:
     """Edit product fields (whitelisted) + stock at the default location."""
+    role = _assert_write_allowed(request)
     current = await _fetch_one(
         f"SELECT {_ITEM_COLS} FROM {_ITEM_FROM} WHERE i.item_id = %s AND i.deleted = 0",
         (item_id,),
@@ -262,6 +271,12 @@ async def update_item(item_id: int, payload: ItemUpdate) -> dict[str, Any]:
         "fields": list(fields.keys()),
     })
 
+    _audit("updated", role, item_id, name=_requester_name(request), detail={
+        "fields": list(fields.keys()),
+        "quantity": payload.quantity,
+        "old_quantity": old_qty if "old_qty" in locals() else None,
+    })
+
     return {"success": True}
 
 
@@ -270,6 +285,7 @@ async def upload_item_image(
     item_id: int,
     file: UploadFile = File(...),
     remove_bg: bool = Query(False, description="Background removal (rembg) — heavy"),
+    request: Request = None,
 ) -> dict[str, Any]:
     """Capture/replace the product photo straight into OSPOS.
 
@@ -278,6 +294,7 @@ async def upload_item_image(
     ``pic_filename``.  Broadcasts the same photo event used by
     ``photos.html`` / the items grid toast.
     """
+    role = _assert_write_allowed(request)
     if not file.filename:
         raise HTTPException(status_code=400, detail="Sem arquivo")
 
@@ -353,6 +370,11 @@ async def upload_item_image(
         "Estoque: photo for item %d saved (%d bytes, remove_bg=%s)",
         item_id, len(contents), remove_bg,
     )
+    _audit("photo", role, item_id, name=_requester_name(request), detail={
+        "filename": ospos_fname,
+        "remove_bg": remove_bg,
+        "bytes": len(contents),
+    })
     return {
         "success": True,
         "filename": ospos_fname,
@@ -361,9 +383,10 @@ async def upload_item_image(
 
 
 @router.delete("/item/{item_id}", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
-async def delete_item(item_id: int) -> dict[str, Any]:
+async def delete_item(item_id: int, request: Request) -> dict[str, Any]:
     """Soft-delete (``deleted=1``) — the item vanishes from sales/search
     but stays recoverable directly in OSPOS."""
+    role = _assert_write_allowed(request)
     row = await _fetch_one(
         "SELECT item_id FROM ospos_items WHERE item_id = %s AND deleted = 0",
         (item_id,),
@@ -385,6 +408,8 @@ async def delete_item(item_id: int) -> dict[str, Any]:
         "item_id": item_id,
         "item_name": "",
     })
+
+    _audit("deleted", role, item_id, name=_requester_name(request), detail={"soft_delete": True})
 
     return {"success": True}
 
@@ -445,6 +470,7 @@ from datetime import datetime as _dt
 
 _SETTINGS_PATH = settings._data_dir if hasattr(settings, '_data_dir') else Path(__file__).resolve().parent.parent.parent / "data"
 _SETTINGS_FILE = _SETTINGS_PATH / "estoque_settings.json"
+_AUDIT_FILE = _SETTINGS_PATH / "estoque_audit.jsonl"
 
 _DEFAULT_SETTINGS: dict[str, Any] = {
     "pin_hash": "",           # SHA-256 of 4-digit PIN (empty = no PIN set)
@@ -586,3 +612,106 @@ def get_settings_sync(s: dict) -> dict[str, Any]:
         "hide_cost": s.get("hide_cost", True),
         "hide_totals": s.get("hide_totals", True),
     }
+
+
+# ── Requester role + audit (telemetry) ─────────────────────────────────
+
+def _requester_role(request: Request, *, default: str = "owner") -> str:
+    """Identify who is calling from the ``X-App-Role`` header.
+
+    The employee APK always sends ``X-App-Role: employee``; the owner APK
+    sends ``owner``. Falls back to the global configured role for legacy
+    / web clients.
+    """
+    hdr = (request.headers.get("X-App-Role") or "").strip().lower()
+    if hdr in ("owner", "employee"):
+        return hdr
+    return _load_settings().get("role", default)
+
+
+def _requester_name(request: Request) -> str:
+    """Who is calling, from the ``X-App-Name`` header (set by the app from
+    the profile screen). Capped at 80 chars; used inside audit entries."""
+    return (request.headers.get("X-App-Name") or "").strip()[:80]
+
+
+def _now_in_schedule() -> bool:
+    """True when the current local time falls within the configured window
+    (supports ranges that cross midnight)."""
+    s = _load_settings()
+    if not s.get("schedule_enabled"):
+        return True
+    start = s.get("schedule_start", "08:00")
+    end = s.get("schedule_end", "18:00")
+    try:
+        now = _dt.now().strftime("%H:%M")
+        if start < end:
+            return start <= now < end
+        return now >= start or now < end  # crosses midnight
+    except Exception:
+        return True
+
+
+def _assert_write_allowed(request: Request) -> str:
+    """Enforce the work schedule on employee writes.
+
+    The owner APK is never blocked; only employee-role callers are gated.
+    Returns the requester role (so callers can keep it for auditing).
+    """
+    role = _requester_role(request)
+    s = _load_settings()
+    if role == "employee" and s.get("lock_enabled"):
+        raise HTTPException(status_code=403, detail="App travado pelo proprietário")
+    if role == "employee" and not _now_in_schedule():
+        sched = s.get("schedule_start", "08:00"), s.get("schedule_end", "18:00")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Fora do horário de trabalho ({sched[0]} – {sched[1]}). "
+                   "Você não pode alterar o estoque agora.",
+        )
+    return role
+
+
+def _audit(action: str, role: str, item_id: Optional[int], name: str = "", detail: dict[str, Any] | None = None) -> None:
+    """Append one telemetry line per employee action (append-only journal).
+
+    Every write performed on the employee app is recorded here, so the
+    owner can audit what was changed, when and by whom. Owner actions are
+    also recorded for completeness. ``name`` comes from the ``X-App-Name``
+    header (employee profile).
+    """
+    try:
+        _AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": _dt.now().isoformat(timespec="seconds"),
+            "role": role,
+            "action": action,
+            "item_id": item_id,
+            "ip": "lan",
+        }
+        if name:
+            entry["name"] = name
+        if detail:
+            entry["detail"] = detail
+        with _AUDIT_FILE.open("a", encoding="utf-8") as f:
+            f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+        logger.info("Estoque audit: role=%s action=%s item=%s", role, action, item_id)
+    except Exception as exc:  # never break a write because auditing failed
+        logger.warning("Estoque audit write failed: %s", exc)
+
+
+@router.get("/audit")
+async def get_audit(limit: int = Query(100, ge=1, le=1000)) -> dict[str, Any]:
+    """Return the most recent audit entries (newest first) — used by the
+    owner to inspect employee activity."""
+    if not _AUDIT_FILE.exists():
+        return {"events": []}
+    lines = _AUDIT_FILE.read_text(encoding="utf-8").splitlines()
+    events = []
+    for line in lines[-limit:]:
+        try:
+            events.append(_json.loads(line))
+        except Exception:
+            continue
+    events.reverse()
+    return {"events": events}
