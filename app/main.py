@@ -58,7 +58,7 @@ from app.api.v1.swarm import router as swarm_router
 from app.api.v1.observability import router as observability_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
-# from app.services.event_processor import EventStoreProcessor
+from app.services.event_processor import EventStoreProcessor
 from app.services.store_sync import StoreSync
 from app.services.circuit_breaker import CircuitBreaker
 from app.utils.logging import setup_logging
@@ -72,7 +72,7 @@ logger = logging.getLogger(__name__)
 # ── Globals ──────────────────────────────────────────────────────────────
 registry = AdapterRegistry()
 cdc_agent = CDCAgent(poll_interval=settings.cdc_poll_interval)
-# event_processor = EventStoreProcessor(registry, poll_interval=5.0)
+event_processor = EventStoreProcessor(registry, poll_interval=5.0)
 circuit_breaker = CircuitBreaker()
 
 
@@ -102,6 +102,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         ml_adapter = MercadoLivreAdapter()
         registry.register(ml_adapter)
         logger.info("Mercado Livre adapter registered")
+        try:
+            await MercadoLivreAdapter.load_from_db()
+        except Exception:
+            logger.exception("ML: falha ao carregar tokens do banco no boot")
     else:
         logger.info("Mercado Livre adapter skipped — ML_CLIENT_ID or ML_CLIENT_SECRET not set")
 
@@ -134,8 +138,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     start_dashboard_poller()
     logger.info("Dashboard poller started")
 
-    processor_task: asyncio.Task | None = None
-    logger.info("EventStore Processor disabled")
+    processor_task = asyncio.create_task(event_processor.run_forever())
+    logger.info("EventStore Processor started (poll every 5s)")
 
     yield
 

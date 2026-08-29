@@ -17,9 +17,12 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from sqlalchemy import select
 
 from app.adapters.base import MarketplaceAdapter
 from app.config import settings
+from app.database import async_session_factory
+from app.models.channel_product_mapping import ChannelProductMapping
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +105,27 @@ class MercadoLivreAdapter(MarketplaceAdapter):
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
             _token_store.update(data)
+            from app.services.ml_oauth import save_ml_tokens
+
+            await save_ml_tokens(data)
             return data
+
+    @staticmethod
+    async def load_from_db() -> None:
+        """Load persisted OAuth tokens from the DB into the in-memory store."""
+        from app.services.ml_oauth import load_ml_tokens
+
+        data = await load_ml_tokens()
+        if not data:
+            return
+        _token_store.access_token = data.get("access_token", "")
+        _token_store.refresh_token = data.get("refresh_token", "")
+        _token_store.user_id = data.get("user_id", 0)
+        _token_store.expires_at = data.get("expires_at", 0.0)
+        if _token_store.access_token:
+            logger.info(
+                "ML: tokens carregados do banco (user_id=%s)", _token_store.user_id
+            )
 
     async def _refresh_access_token(self) -> bool:
         """Refresh the access token when it expires."""
@@ -121,7 +144,11 @@ class MercadoLivreAdapter(MarketplaceAdapter):
             async with httpx.AsyncClient(timeout=_API_TIMEOUT) as client:
                 resp = await client.post(url, data=body)
                 resp.raise_for_status()
-                _token_store.update(resp.json())
+                data = resp.json()
+                _token_store.update(data)
+                from app.services.ml_oauth import save_ml_tokens
+
+                await save_ml_tokens(data)
                 return True
         except httpx.HTTPStatusError as exc:
             logger.error("ML token refresh failed: %s", exc.response.text[:300])
@@ -255,39 +282,62 @@ class MercadoLivreAdapter(MarketplaceAdapter):
     # ------------------------------------------------------------------
 
     async def get_external_id(self, sku: str) -> str | None:
-        """Search for a product on ML by SKU (stored in seller_custom_field).
+        """Resolve an internal SKU to the ML item ID.
 
-        ML doesn't have a native SKU field; we store it in
-        ``seller_custom_field`` during publish.
+        Checks the local ``channel_product_mapping`` first (fast, no API
+        call). Falls back to scanning the seller's items for a matching
+        ``seller_custom_field`` when no mapping exists.
         """
+        # 1. Local mapping (fast path)
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(ChannelProductMapping).where(
+                        ChannelProductMapping.sku == sku,
+                        ChannelProductMapping.channel == "mercadolivre",
+                    )
+                )
+                mapping = result.scalar_one_or_none()
+                if mapping:
+                    return mapping.external_id
+        except Exception:
+            logger.exception("ML get_external_id: local mapping lookup failed")
+
+        # 2. Fallback: scan seller items for matching seller_custom_field
         if not _token_store.user_id:
             logger.warning("ML user_id not set — cannot search products")
             return None
 
-        params = {
-            "seller_id": str(_token_store.user_id),
-            "search_type": "scan",
-            "q": sku,  # searches title + description; not ideal but works
-        }
-        try:
-            resp = await self._request("GET", "/sites/MLB/search", params=params)
-            resp.raise_for_status()
-            data = resp.json()
+        offset = 0
+        limit = 50
+        while True:
+            params = {
+                "seller_id": str(_token_store.user_id),
+                "search_type": "scan",
+                "limit": str(limit),
+                "offset": str(offset),
+            }
+            try:
+                resp = await self._request("GET", "/sites/MLB/search", params=params)
+                resp.raise_for_status()
+                data = resp.json()
+            except httpx.HTTPStatusError as exc:
+                logger.error("ML SKU lookup failed: %s", exc.response.text[:300])
+                return None
 
-            # Try to find exact SKU match in seller_custom_field
-            for result in data.get("results", []):
+            results = data.get("results", [])
+            for result in results:
                 if result.get("seller_custom_field") == sku:
                     return result["id"]
 
-            # Fallback: return first result if only one matches
-            if len(data.get("results", [])) == 1:
-                return data["results"][0]["id"]
+            paging = data.get("paging", {})
+            total = paging.get("total", 0)
+            offset += limit
+            if offset >= total or not results:
+                break
 
-            logger.info("SKU %s not found on ML", sku)
-            return None
-        except httpx.HTTPStatusError as exc:
-            logger.error("ML SKU lookup failed: %s", exc.response.text[:300])
-            return None
+        logger.info("SKU %s not found on ML", sku)
+        return None
 
     # ------------------------------------------------------------------
     # Product publishing
@@ -350,3 +400,146 @@ class MercadoLivreAdapter(MarketplaceAdapter):
         except httpx.HTTPStatusError as exc:
             logger.error("ML publish failed: %s", exc.response.text[:600])
             raise
+
+    # ------------------------------------------------------------------
+    # Catalog products (produto de catálogo do ML por EAN)
+    # ------------------------------------------------------------------
+
+    async def search_catalog_by_ean(self, ean: str) -> dict[str, Any] | None:
+        """Search the ML catalog for a product by EAN (barcode).
+
+        Returns the first active catalog product match (``catalog_product_id``
+        plus name/pictures) or ``None`` when nothing is found.
+        """
+        params = {"status": "active", "site_id": "MLB", "q": ean}
+        try:
+            resp = await self._request("GET", "/products/search", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("results", [])
+            if not results:
+                logger.info("ML: no catalog product for EAN %s", ean)
+                return None
+            p = results[0]
+            logger.info(
+                "ML: catalog product for EAN %s → %s (%s)",
+                ean, p.get("id"), (p.get("name") or "")[:50],
+            )
+            return {
+                "catalog_product_id": p.get("id"),
+                "name": p.get("name", p.get("title", "")),
+                "pictures": p.get("pictures", []),
+                "status": p.get("status"),
+                "domain_id": p.get("domain_id"),
+            }
+        except httpx.HTTPStatusError as exc:
+            logger.error("ML catalog search failed (EAN %s): %s", ean, exc.response.text[:300])
+            return None
+
+    async def publish_catalog_listing(self, product: dict[str, Any]) -> str:
+        """Publish a catalog listing on Mercado Livre.
+
+        Links the listing to a catalog product (``catalog_product_id``), so ML
+        supplies the official title, photos and attributes. The seller only
+        defines price, stock and SKU.
+
+        ``product`` expects keys:
+          - ``catalog_product_id`` → ML catalog product ID (e.g. "MLB67014274")
+          - ``sku``                → stored as seller_custom_field
+          - ``price``              → decimal
+          - ``stock_quantity``     → int
+          - ``condition``          → "new" (default) or "used"
+          - ``listing_type_id``    → default "gold_special"
+        """
+        # ML derives the title from the catalog product, so we must NOT send it.
+        body: dict[str, Any] = {
+            "site_id": "MLB",
+            "catalog_product_id": product.get("catalog_product_id"),
+            "catalog_listing": True,
+            "price": product.get("price", 0),
+            "currency_id": "BRL",
+            "available_quantity": product.get("stock_quantity", 1),
+            "condition": product.get("condition", "new"),
+            "listing_type_id": product.get("listing_type_id", "gold_special"),
+            "seller_custom_field": product.get("sku", ""),
+            "sale_terms": [
+                {"id": "WARRANTY_TYPE", "value_name": "Sem garantia"},
+            ],
+        }
+
+        category_id = product.get("category_id") or settings.ml_default_category
+        if not category_id:
+            # Derive the category from the catalog product name via domain discovery.
+            name = product.get("name") or product.get("title") or ""
+            cat = await self._discover_category(name)
+            if cat:
+                category_id = cat
+        body["category_id"] = category_id
+
+        try:
+            resp = await self._request("POST", "/items", json=body)
+            resp.raise_for_status()
+            created = resp.json()
+            external_id = created["id"]
+            logger.info(
+                "ML catalog listing published: SKU %s → ID %s (catalog %s)",
+                product.get("sku"),
+                external_id,
+                product.get("catalog_product_id"),
+            )
+            await self._save_mapping(product.get("sku", ""), external_id)
+            return external_id
+        except httpx.HTTPStatusError as exc:
+            logger.error("ML catalog publish failed: %s", exc.response.text[:600])
+            raise
+
+    async def _save_mapping(self, sku: str, external_id: str) -> None:
+        """Persist the SKU → ML item ID mapping for fast stock/price sync."""
+        if not sku:
+            return
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(ChannelProductMapping).where(
+                        ChannelProductMapping.sku == sku,
+                        ChannelProductMapping.channel == "mercadolivre",
+                    )
+                )
+                mapping = result.scalar_one_or_none()
+                if mapping:
+                    mapping.external_id = external_id
+                else:
+                    session.add(
+                        ChannelProductMapping(
+                            sku=sku,
+                            channel="mercadolivre",
+                            external_id=external_id,
+                            external_url=f"https://www.mercadolivre.com.br/items/{external_id}",
+                            status="active",
+                        )
+                    )
+                await session.commit()
+        except Exception:
+            logger.exception("ML: failed to save channel mapping for SKU %s", sku)
+
+    async def _discover_category(self, query: str) -> str | None:
+        """Resolve the ML category_id for a product name via domain discovery."""
+        if not query:
+            return None
+        params = {"limit": 1, "q": query}
+        try:
+            resp = await self._request(
+                "GET", "/sites/MLB/domain_discovery/search", params=params
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list) and data and data[0].get("category_id"):
+                return data[0]["category_id"]
+            return None
+        except httpx.HTTPStatusError as exc:
+            logger.warning("ML category discovery failed: %s", exc.response.text[:200])
+            return None
+
+    # ------------------------------------------------------------------
+    # Stock / price convenience (updates existing listings)
+    # ------------------------------------------------------------------
