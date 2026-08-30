@@ -23,6 +23,7 @@ from app.adapters.base import MarketplaceAdapter
 from app.config import settings
 from app.database import async_session_factory
 from app.models.channel_product_mapping import ChannelProductMapping
+from app.services.ml_pricing import compute_ml_price
 
 logger = logging.getLogger(__name__)
 
@@ -350,26 +351,33 @@ class MercadoLivreAdapter(MarketplaceAdapter):
           - ``title``         → listing title
           - ``sku``           → stored as seller_custom_field
           - ``description``   → plain text or HTML
-          - ``price``         → decimal
+          - ``price``         → decimal (PDV / store price — base do markup)
           - ``stock_quantity`` → int
           - ``category_id``   → ML category ID (e.g. \"MLB1234\")
           - ``condition``     → \"new\" or \"used\" (default: \"new\")
           - ``listing_type_id`` → \"gold_pro\", \"gold_special\", \"free\" (def: \"gold_special\")
           - ``pictures``      → list of URLs
         """
+        pricing = compute_ml_price(
+            product.get("price", 0),
+            product.get("cost_price"),
+        )
         body: dict[str, Any] = {
             "title": product.get("title", ""),
             "category_id": product.get("category_id", settings.ml_default_category),
-            "price": product.get("price", 0),
+            "price": pricing.price,
             "currency_id": "BRL",
             "available_quantity": product.get("stock_quantity", 1),
             "condition": product.get("condition", "new"),
-            "listing_type_id": product.get("listing_type_id", "gold_special"),
+            "listing_type_id": pricing.listing_type_id,
             "seller_custom_field": product.get("sku", ""),
             "sale_terms": [
                 {"id": "WARRANTY_TYPE", "value_name": "Sem garantia"},
             ],
         }
+
+        if pricing.shipping_mode == "free":
+            body["shipping"] = {"mode": "me2", "free_shipping": True}
 
         # Description
         description = product.get("description", "")
@@ -446,26 +454,33 @@ class MercadoLivreAdapter(MarketplaceAdapter):
         ``product`` expects keys:
           - ``catalog_product_id`` → ML catalog product ID (e.g. "MLB67014274")
           - ``sku``                → stored as seller_custom_field
-          - ``price``              → decimal
+          - ``price``              → decimal (PDV / store price — base do markup)
           - ``stock_quantity``     → int
           - ``condition``          → "new" (default) or "used"
           - ``listing_type_id``    → default "gold_special"
         """
+        pricing = compute_ml_price(
+            product.get("price", 0),
+            product.get("cost_price"),
+        )
         # ML derives the title from the catalog product, so we must NOT send it.
         body: dict[str, Any] = {
             "site_id": "MLB",
             "catalog_product_id": product.get("catalog_product_id"),
             "catalog_listing": True,
-            "price": product.get("price", 0),
+            "price": pricing.price,
             "currency_id": "BRL",
             "available_quantity": product.get("stock_quantity", 1),
             "condition": product.get("condition", "new"),
-            "listing_type_id": product.get("listing_type_id", "gold_special"),
+            "listing_type_id": pricing.listing_type_id,
             "seller_custom_field": product.get("sku", ""),
             "sale_terms": [
                 {"id": "WARRANTY_TYPE", "value_name": "Sem garantia"},
             ],
         }
+
+        if pricing.shipping_mode == "free":
+            body["shipping"] = {"mode": "me2", "free_shipping": True}
 
         category_id = product.get("category_id") or settings.ml_default_category
         if not category_id:

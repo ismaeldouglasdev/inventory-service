@@ -65,6 +65,7 @@ class ChannelPublishRequest(BaseModel):
     title: str
     description: str = ""
     price: float
+    cost_price: Optional[float] = None  # usado se ml_price_base="cost"
     stock_quantity: int = 1
     condition: str = "new"
     listing_type_id: str = "gold_special"

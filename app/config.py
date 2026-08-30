@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     ml_user_id: int = 0
     ml_default_category: str = "MLB271793"  # Ferramentas (fallback)
 
+    # ML price = base × markup. Base "pdv" (preço loja) ou "cost" (custo).
+    # Regra do usuário: SEMPRE acima do PDV, senão as taxas do ML comem o lucro.
+    ml_price_base: str = "pdv"
+    ml_price_markup: float = 1.4
+    ml_price_round: str = "99"  # "99"|"90"|"none"
+    ml_premium_min_price: float = 30.0  # >= este valor → gold_pro (Premium)
+    ml_shipping_mode: str = "normal"  # "normal"|"free"
+
     # ── Shopee ──────────────────────────────────────────────────────────
     shopee_partner_id: int = 0
     shopee_api_key: str = ""
@@ -92,7 +100,7 @@ class Settings(BaseSettings):
 
     # ── Security ───────────────────────────────────────────────────────
     api_key: str = ""  # If set, requires X-API-Key header on sensitive endpoints
-    admin_password: str = "admin123"  # Painel admin (/v1/admin/auth/login)
+    admin_password: str = ""  # Painel admin (/v1/admin/auth/login) — DEVE ser definida via env
     jwt_secret: str = ""  # Segredo HS256 dos tokens do admin (obrigatório em produção)
     rate_limit_store: int = 60   # requests/min for store endpoints
     rate_limit_write: int = 10   # requests/min for write endpoints

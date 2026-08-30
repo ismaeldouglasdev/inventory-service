@@ -19,6 +19,7 @@ from app.models.product_mapping import ProductMapping
 from app.models.channel_product_mapping import ChannelProductMapping
 from app.schemas.product import ChannelPublishRequest
 from app.services.event_processor import create_event
+from app.utils.security import verify_admin_auth, verify_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +87,17 @@ async def ml_status() -> dict[str, Any]:
     }
 
 
-@router.get("/token-debug")
+@router.get("/token-debug", dependencies=[Depends(verify_admin_auth)])
 async def token_debug() -> dict[str, Any]:
-    """Temporary: return raw token values for .env setup."""
+    """Return whether the ML adapter holds tokens (no raw values).
+
+    Security fix (29/ago/2026): this endpoint previously returned the raw
+    access_token/refresh_token in plaintext with NO authentication. It is now
+    admin-only and returns only booleans — never the token values.
+    """
     return {
-        "ml_access_token": _token_store.access_token,
-        "ml_refresh_token": _token_store.refresh_token,
+        "has_access_token": bool(_token_store.access_token),
+        "has_refresh_token": bool(_token_store.refresh_token),
         "ml_user_id": _token_store.user_id,
     }
 
@@ -99,12 +105,15 @@ async def token_debug() -> dict[str, Any]:
 # ── Product publishing ───────────────────────────────────────────────────
 
 
-@router.post("/publish", status_code=201)
+@router.post("/publish", status_code=201, dependencies=[Depends(verify_api_key)])
 async def publish_product(
     body: ChannelPublishRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Publish a product to Mercado Livre.
+
+    Security fix (29/ago/2026): this endpoint previously had NO authentication
+    — anyone could publish items to ML. Now requires a valid X-API-Key.
 
     Accepts full product data in the request body, publishes directly
     to ML, saves the channel mapping, and creates a tracking event
@@ -159,6 +168,7 @@ async def publish_product(
         "sku": sku,
         "description": body.description,
         "price": body.price,
+        "cost_price": body.cost_price,
         "stock_quantity": body.stock_quantity,
         "condition": body.condition,
         "listing_type_id": body.listing_type_id,
