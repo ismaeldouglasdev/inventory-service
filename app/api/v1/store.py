@@ -394,7 +394,7 @@ async def head_product_image(filename: str) -> Response:
     raise HTTPException(status_code=404, detail="Image not found")
 
 
-@router.get("/ospos-item-images/{filename:path}")
+@router.get("/ospos-item-images/{filename:path}", dependencies=[Depends(verify_api_key)])
 async def serve_ospos_item_image(filename: str) -> Any:
     """Serve an item photo directly from the OSPOS uploads dir.
 
@@ -419,7 +419,7 @@ async def serve_ospos_item_image(filename: str) -> Any:
     return FileResponse(str(filepath), media_type=media_types.get(ext, "application/octet-stream"))
 
 
-@router.get("/sync-total", response_model_exclude_none=True)
+@router.get("/sync-total", response_model_exclude_none=True, dependencies=[Depends(verify_api_key)])
 async def sync_total(
     limit: int = Query(1000, ge=1, le=5000),
     offset: int = Query(0, ge=0),
@@ -894,7 +894,7 @@ async def lama_product_photo(
 # ── Photo upload status (real-time feedback) ──────────────────────────────
 
 
-@router.get("/photos/recent")
+@router.get("/photos/recent", dependencies=[Depends(verify_api_key)])
 async def recent_photo_uploads(
     limit: int = Query(8, ge=1, le=50),
 ) -> list[dict[str, Any]]:
@@ -967,7 +967,7 @@ class LinkImageRequest(BaseModel):
     filename: str
 
 
-@router.post("/products/{product_id}/image/link", status_code=200)
+@router.post("/products/{product_id}/image/link", status_code=200, dependencies=[Depends(verify_api_key)])
 async def link_existing_image(
     product_id: int,
     body: LinkImageRequest,
@@ -1027,7 +1027,7 @@ async def link_existing_image(
 # ── Sync endpoint ────────────────────────────────────────────────────────
 
 
-@router.post("/sync", status_code=202)
+@router.post("/sync", status_code=202, dependencies=[Depends(verify_api_key)])
 async def trigger_store_sync(
     mode: str = Query("delta", pattern=r"^(full|delta)$"),
     only_with_images: bool = Query(False),
@@ -1305,7 +1305,7 @@ async def scan_websocket(websocket: WebSocket) -> None:
         await _scan_notifier.disconnect(websocket)
 
 
-@router.post("/scan/{barcode}")
+@router.post("/scan/{barcode}", dependencies=[Depends(verify_api_key)])
 async def register_scan(
     barcode: str,
     session: AsyncSession = Depends(get_session),

@@ -11,7 +11,7 @@ import re
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -63,6 +63,7 @@ from app.services.store_sync import StoreSync
 from app.services.circuit_breaker import CircuitBreaker
 from app.utils.logging import setup_logging
 from app.utils.metrics import generate_metrics
+from app.utils.security import verify_api_key
 
 # ── Logging ────────────────────────────────────────────────────────────
 setup_logging()
@@ -234,9 +235,12 @@ class MetricsASGIMiddleware:
 app.add_middleware(MetricsASGIMiddleware)
 
 # ── Metrics endpoint ────────────────────────────────────────────────────
-@app.get("/metrics", response_class=PlainTextResponse, include_in_schema=True)
+@app.get("/metrics", response_class=PlainTextResponse, include_in_schema=True, dependencies=[Depends(verify_api_key)])
 async def metrics_endpoint() -> PlainTextResponse:
-    """Prometheus metrics endpoint — scraped by Prometheus or checked manually."""
+    """Prometheus metrics endpoint — scraped by Prometheus or checked manually.
+
+    Security fix (29/ago/2026): now requires a valid X-API-Key.
+    """
     return PlainTextResponse(
         content=generate_metrics().decode("utf-8"),
         media_type="text/plain; charset=utf-8",
@@ -263,8 +267,13 @@ app.include_router(observability_router, prefix="/v1")
 APK_PATH = Path(__file__).resolve().parent.parent / "static" / "app-debug.apk"
 
 
-@app.get("/app-debug.apk", include_in_schema=False)
+@app.get("/app-debug.apk", include_in_schema=False, dependencies=[Depends(verify_api_key)])
 async def download_apk():
+    """Serve the Android APK.
+
+    Security fix (29/ago/2026): the APK contains internal host/endpoints, so
+    it now requires a valid X-API-Key.
+    """
     if APK_PATH.exists():
         return FileResponse(str(APK_PATH), media_type="application/vnd.android.package-archive", filename="app-debug.apk")
     return PlainTextResponse("APK not found", status_code=404)

@@ -80,16 +80,28 @@ async def verify_admin_auth(
 
 
 async def verify_api_key(request: Request, api_key: Optional[str] = Depends(api_key_header)) -> None:
-    """Protect sensitive endpoints. Skips if API_KEY is not configured."""
+    """Protect sensitive endpoints. REQUIRES a valid API key.
+
+    Security fix (29/ago/2026): previously, a missing API_KEY env var or a
+    missing/invalid key was silently ALLOWED (open access). Now:
+    - If API_KEY is not configured, the endpoint is unavailable (503).
+    - A missing or invalid key is rejected with 401.
+    - The hardcoded "dummy-key" backdoor was removed.
+    """
     if not settings.api_key:
-        return  # No key configured → open access (dev mode)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API key not configured on server",
+        )
     if not api_key:
         # Also check query param for GET requests
         api_key = request.query_params.get("api_key")
-    if not api_key:
-        return  # No key provided → allow for now (app bug: interceptor not sending key)
-    if api_key not in (settings.api_key, "dummy-key"):
-        logger.warning("API key auth failed: received key=%r, expected settings.api_key=%r, header present=%s", api_key, settings.api_key, "X-API-Key" in request.headers)
+    if not api_key or api_key != settings.api_key:
+        logger.warning(
+            "API key auth failed: received key=%r, header present=%s",
+            api_key,
+            "X-API-Key" in request.headers,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid API key",
