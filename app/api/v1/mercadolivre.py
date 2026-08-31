@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.implementations.mercadolivre import (
@@ -219,6 +219,7 @@ async def publish_product(
 @router.post("/webhook")
 async def ml_webhook(
     body: dict[str, Any],
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Receive a Mercado Livre webhook notification.
@@ -230,9 +231,9 @@ async def ml_webhook(
 
     For ``orders_v2`` the order is fetched from ML and each item is pushed
     through the sell pipeline (reserve → confirm → propagate → commit) so the
-    OSPOS stock is deducted to match the ML sale.
-
-    Returns 200 immediately — ML expects a fast ack and retries on non-2xx.
+    OSPOS stock is deducted to match the ML sale. This runs as a background
+    task so the endpoint returns 200 within ML's 500ms window — ML deactivates
+    topics when the callback is slow.
     """
     adapter = _get_adapter()
     try:
@@ -252,20 +253,18 @@ async def ml_webhook(
     await session.commit()
 
     # ── orders_v2: push the ML sale through the sell pipeline ──────────
-    processed: list[dict[str, Any]] = []
     if parsed.get("event_type") == "mercadolivre.orders_v2":
         order_id = _extract_order_id(body.get("resource", ""))
         if order_id:
-            processed = await _process_ml_order(adapter, order_id, event.id)
+            background_tasks.add_task(_process_ml_order, adapter, order_id, event.id)
 
     logger.info(
-        "ML webhook received: topic=%s sku=%s event_id=%s orders_processed=%d",
+        "ML webhook received: topic=%s sku=%s event_id=%s",
         parsed.get("event_type"),
         parsed.get("sku"),
         event.id,
-        len(processed),
     )
-    return {"status": "ok", "event_id": event.id, "orders_processed": processed}
+    return {"status": "ok", "event_id": event.id}
 
 
 def _extract_order_id(resource: str) -> str | None:
