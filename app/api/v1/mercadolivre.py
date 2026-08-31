@@ -228,6 +228,10 @@ async def ml_webhook(
     tracking event is persisted in the EventStore so downstream processors
     (stock sync, order pipeline) can react.
 
+    For ``orders_v2`` the order is fetched from ML and each item is pushed
+    through the sell pipeline (reserve → confirm → propagate → commit) so the
+    OSPOS stock is deducted to match the ML sale.
+
     Returns 200 immediately — ML expects a fast ack and retries on non-2xx.
     """
     adapter = _get_adapter()
@@ -247,13 +251,94 @@ async def ml_webhook(
     session.add(event)
     await session.commit()
 
+    # ── orders_v2: push the ML sale through the sell pipeline ──────────
+    processed: list[dict[str, Any]] = []
+    if parsed.get("event_type") == "mercadolivre.orders_v2":
+        order_id = _extract_order_id(body.get("resource", ""))
+        if order_id:
+            processed = await _process_ml_order(adapter, order_id, event.id)
+
     logger.info(
-        "ML webhook received: topic=%s sku=%s event_id=%s",
+        "ML webhook received: topic=%s sku=%s event_id=%s orders_processed=%d",
         parsed.get("event_type"),
         parsed.get("sku"),
         event.id,
+        len(processed),
     )
-    return {"status": "ok", "event_id": event.id}
+    return {"status": "ok", "event_id": event.id, "orders_processed": processed}
+
+
+def _extract_order_id(resource: str) -> str | None:
+    """Extract the ML order id from a resource URL like /v1/orders/123456."""
+    if "/orders/" not in resource:
+        return None
+    return resource.split("/orders/")[-1].strip("/") or None
+
+
+async def _process_ml_order(
+    adapter: MercadoLivreAdapter,
+    order_id: str,
+    source_event_id: str | None,
+) -> list[dict[str, Any]]:
+    """Fetch an ML order and run the sell pipeline for each mapped item.
+
+    Items whose ML id has no local mapping are skipped (not published through
+    this service) and reported as ``skipped``.
+    """
+    from app.services.sell_pipeline import SellPipeline
+    from app.adapters.registry import AdapterRegistry
+
+    order = await adapter.fetch_order(order_id)
+    if not order or not order.get("items"):
+        logger.warning("ML order %s: no items to process", order_id)
+        return []
+
+    pipeline = SellPipeline(_registry or AdapterRegistry())
+    results: list[dict[str, Any]] = []
+    for item in order["items"]:
+        sku = await adapter.get_sku_by_external_id(item["external_id"])
+        if not sku:
+            results.append(
+                {
+                    "external_id": item["external_id"],
+                    "status": "skipped",
+                    "reason": "no local mapping",
+                }
+            )
+            continue
+        try:
+            res = await pipeline.sell(
+                sku=sku,
+                quantity=item["quantity"],
+                unit_price=item["unit_price"],
+                channel="mercadolivre",
+                order_id=order_id,
+                source_event_id=source_event_id,
+                notes=f"ML order {order_id}",
+            )
+            results.append(
+                {
+                    "sku": sku,
+                    "external_id": item["external_id"],
+                    "quantity": item["quantity"],
+                    "status": res.get("status", "processed"),
+                    "reservation_id": res.get("id"),
+                }
+            )
+        except Exception as exc:
+            logger.error(
+                "ML order %s: sell pipeline failed for SKU %s: %s",
+                order_id, sku, exc,
+            )
+            results.append(
+                {
+                    "sku": sku,
+                    "external_id": item["external_id"],
+                    "status": "error",
+                    "reason": str(exc),
+                }
+            )
+    return results
 
 
 # ── Listings ─────────────────────────────────────────────────────────────

@@ -397,6 +397,70 @@ class MercadoLivreAdapter(MarketplaceAdapter):
         return internal
 
     # ------------------------------------------------------------------
+    # Orders
+    # ------------------------------------------------------------------
+
+    async def fetch_order(self, order_id: str) -> dict[str, Any] | None:
+        """Fetch an ML order and normalise its items.
+
+        Returns ``None`` when the order cannot be fetched (network/auth) or
+        when the payload has no order items. Each item is normalised to:
+        ``{"external_id": <ML item id>, "quantity": int, "unit_price": float}``
+        """
+        try:
+            resp = await self._request("GET", f"/orders/{order_id}")
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("ML fetch_order %s failed: %s", order_id, exc)
+            return None
+        except httpx.RequestError as exc:
+            logger.error("ML fetch_order %s network error: %s", order_id, exc)
+            return None
+
+        data = resp.json()
+        items = data.get("order_items") or []
+        normalised = []
+        for it in items:
+            item = it.get("item") or {}
+            external_id = item.get("id")
+            if not external_id:
+                continue
+            normalised.append(
+                {
+                    "external_id": external_id,
+                    "quantity": int(it.get("quantity", 1) or 1),
+                    "unit_price": float(
+                        (it.get("unit_price") or 0) or 0
+                    ),
+                }
+            )
+        return {
+            "order_id": order_id,
+            "status": data.get("status"),
+            "items": normalised,
+        }
+
+    async def get_sku_by_external_id(self, external_id: str) -> str | None:
+        """Reverse-map an ML item ID to the internal SKU.
+
+        Looks up ``channel_product_mapping`` by external_id. Returns ``None``
+        when no mapping exists (item not published through this service).
+        """
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(ChannelProductMapping).where(
+                        ChannelProductMapping.external_id == external_id,
+                        ChannelProductMapping.channel == "mercadolivre",
+                    )
+                )
+                mapping = result.scalar_one_or_none()
+                return mapping.sku if mapping else None
+        except Exception:
+            logger.exception("ML get_sku_by_external_id failed for %s", external_id)
+            return None
+
+    # ------------------------------------------------------------------
     # SKU → external ID resolution
     # ------------------------------------------------------------------
 
