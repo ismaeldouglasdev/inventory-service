@@ -53,6 +53,12 @@ def _catalog_matches(local_name: str, catalog_name: str) -> bool:
       - A match is accepted when at least one significant token is shared, or
         when the local name is a substring of the catalog name (and vice
         versa) — catalog titles often append brand/model details.
+      - REJECTS incompatible matches:
+          * Quantity mismatch — catalog title advertises a large pack
+            (e.g. "150 caixinhas", "720 unidades", "27 agulhas") while the
+            local product is a single unit.
+          * Brand mismatch — local name carries a brand (e.g. "TEK BOND")
+            and the catalog title carries a DIFFERENT brand (e.g. "Almaflex").
     """
     import re
     import unicodedata
@@ -75,8 +81,62 @@ def _catalog_matches(local_name: str, catalog_name: str) -> bool:
         "grande", "medio", "medio", "pequeno", "pequena", "extra",
     }
 
-    local_tokens = {t for t in _norm(local_name).split() if t not in _STOP}
-    catalog_tokens = {t for t in _norm(catalog_name).split() if t not in _STOP}
+    # Units that indicate a PACK/quantity in the catalog title.
+    _PACK_UNITS = {
+        "unid", "unidades", "un", "pecas", "peca", "caixinhas", "caixas",
+        "caixa", "pacote", "pacotes", "cartela", "cartelas", "duzias",
+        "duzia", "agulhas", "borrachas", "canetas", "lapis", "lápis",
+        "colheres", "facas", "pratos", "copos", "toalhas", "panos",
+        "baldes", "potes", "vasilhas", "cestinhas", "escovinhas",
+    }
+
+    # Common brand tokens to detect brand mismatches.
+    _BRANDS = {
+        "ercaplast", "erca", "uninjet", "plasmont", "arqplast", "imblast",
+        "inplast", "tekbond", "tek", "bond", "acrilex", "leonora", "useit",
+        "mamita", "clink", "camargo", "aluminio", "sq", "wellmix", "homeck",
+        "nix", "house", "havaianas", "mormaii", "blindage", "samba", "toys",
+        "ark", "toys", "arktoys", "almaflex", "plasnorthon", "supremo",
+        "supra", "bj", "plast", "gs", "util", "clean", "limp", "patrick",
+        "snoopy", "melody", "chase", "canina", "kuromi", "naruto",
+    }
+
+    ln = _norm(local_name)
+    cn = _norm(catalog_name)
+
+    # ── Quantity mismatch guard ────────────────────────────────────────
+    # If the catalog title advertises a large pack (e.g. "150 caixinhas",
+    # "720 unidades", "27 agulhas") but the local name is a single item,
+    # reject the match — the EAN likely points to a bulk listing.
+    def _pack_qty(text: str) -> int | None:
+        # Look for "<number> <unit>" patterns like "150 caixinhas", "27 agulhas".
+        for m in re.finditer(r"(\d{1,4})\s*([a-zç]+)", text):
+            num = int(m.group(1))
+            unit = m.group(2)
+            if unit in _PACK_UNITS and num >= 5:
+                return num
+        return None
+
+    local_pack = _pack_qty(ln)
+    catalog_pack = _pack_qty(cn)
+    if catalog_pack and catalog_pack >= 5 and (local_pack is None or local_pack < catalog_pack):
+        # Catalog is a bulk pack, local is single/smaller → incompatible.
+        return False
+
+    # ── Brand mismatch guard ───────────────────────────────────────────
+    local_brands = {t for t in ln.split() if t in _BRANDS}
+    catalog_brands = {t for t in cn.split() if t in _BRANDS}
+    if local_brands and catalog_brands:
+        # Compatible when any local brand is a substring of a catalog brand
+        # (e.g. "erca" ⊂ "ercaplast") or they share a token.
+        compatible = bool(local_brands & catalog_brands) or any(
+            lb in cb or cb in lb for lb in local_brands for cb in catalog_brands
+        )
+        if not compatible:
+            return False
+
+    local_tokens = {t for t in ln.split() if t not in _STOP}
+    catalog_tokens = {t for t in cn.split() if t not in _STOP}
 
     if not local_tokens:
         # Nothing meaningful to compare — trust the EAN match.
@@ -87,8 +147,6 @@ def _catalog_matches(local_name: str, catalog_name: str) -> bool:
         return True
 
     # Substring fallback: catalog titles often embed the local name verbatim.
-    ln = _norm(local_name)
-    cn = _norm(catalog_name)
     if len(ln) >= 4 and (ln in cn or cn in ln):
         return True
 

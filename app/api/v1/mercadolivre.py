@@ -211,3 +211,75 @@ async def publish_product(
         "external_url": channel_mapping.external_url,
         "event_id": event.id,
     }
+
+
+# ── Webhook (ML → inventory-service) ────────────────────────────────────
+
+
+@router.post("/webhook")
+async def ml_webhook(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Receive a Mercado Livre webhook notification.
+
+    ML posts here on topic changes (``orders_v2``, ``items``, ``questions``).
+    The payload is normalised via ``MercadoLivreAdapter.parse_webhook`` and a
+    tracking event is persisted in the EventStore so downstream processors
+    (stock sync, order pipeline) can react.
+
+    Returns 200 immediately — ML expects a fast ack and retries on non-2xx.
+    """
+    adapter = _get_adapter()
+    try:
+        parsed = await adapter.parse_webhook(body)
+    except Exception as exc:
+        logger.error("ML webhook parse failed: %s", exc)
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {exc}")
+
+    # Persist a tracking event for downstream processors.
+    event = create_event(
+        event_type=parsed.get("event_type", "mercadolivre.unknown"),
+        payload=parsed.get("raw", body),
+        sku=parsed.get("sku"),
+        channel="mercadolivre",
+    )
+    session.add(event)
+    await session.commit()
+
+    logger.info(
+        "ML webhook received: topic=%s sku=%s event_id=%s",
+        parsed.get("event_type"),
+        parsed.get("sku"),
+        event.id,
+    )
+    return {"status": "ok", "event_id": event.id}
+
+
+# ── Listings ─────────────────────────────────────────────────────────────
+
+
+@router.get("/listings")
+async def ml_listings(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """List products published to Mercado Livre with their status."""
+    from sqlalchemy import select
+
+    result = await session.execute(
+        select(ChannelProductMapping).where(
+            ChannelProductMapping.channel == "mercadolivre"
+        )
+    )
+    rows = result.scalars().all()
+    listings = [
+        {
+            "sku": r.sku,
+            "external_id": r.external_id,
+            "external_url": r.external_url,
+            "status": r.status,
+            "synced_at": r.synced_at.isoformat() if r.synced_at else None,
+        }
+        for r in rows
+    ]
+    return {"count": len(listings), "listings": listings}
