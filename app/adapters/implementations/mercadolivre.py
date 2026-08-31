@@ -35,6 +35,66 @@ _TOKEN_URL = "https://api.mercadolibre.com/oauth/token"  # Token exchange
 _API_TIMEOUT = 30.0
 
 
+# ── Catalog match validation ─────────────────────────────────────────────
+
+
+def _catalog_matches(local_name: str, catalog_name: str) -> bool:
+    """Heuristic check that a local product name matches an ML catalog product.
+
+    Compares the meaningful keyword tokens of both names. Returns ``True``
+    when there is enough overlap to trust the EAN match, ``False`` when the
+    catalog product is clearly a different item (e.g. "Lenovo Thinkpad" vs
+    "PENEIRA").
+
+    Strategy:
+      - Normalize both names (lowercase, strip accents, drop punctuation).
+      - Drop generic stop-words (sizes, colors, materials, connectors) that
+        carry little identity.
+      - A match is accepted when at least one significant token is shared, or
+        when the local name is a substring of the catalog name (and vice
+        versa) — catalog titles often append brand/model details.
+    """
+    import re
+    import unicodedata
+
+    def _norm(text: str) -> str:
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(c for c in text if not unicodedata.combining(c))
+        return re.sub(r"[^a-z0-9 ]", " ", text.lower())
+
+    # Generic tokens that don't identify the product (sizes, colors, etc.)
+    _STOP = {
+        "com", "de", "da", "do", "das", "dos", "para", "em", "no", "na",
+        "un", "uma", "kit", "com", "c", "p", "x", "cm", "mm", "ml", "l",
+        "kg", "g", "unid", "unidades", "peca", "pecas", "cor", "cores",
+        "preto", "branco", "vermelho", "azul", "verde", "amarelo", "rosa",
+        "cinza", "marrom", "laranja", "roxo", "transparente", "oficial",
+        "original", "novo", "nova", "promocao", "promocional", "barato",
+        "desconto", "frete", "gratis", "grátis", "nacional", "importado",
+        "tamanho", "tamanhos", "numero", "numeros", "medida", "medidas",
+        "grande", "medio", "medio", "pequeno", "pequena", "extra",
+    }
+
+    local_tokens = {t for t in _norm(local_name).split() if t not in _STOP}
+    catalog_tokens = {t for t in _norm(catalog_name).split() if t not in _STOP}
+
+    if not local_tokens:
+        # Nothing meaningful to compare — trust the EAN match.
+        return True
+
+    overlap = local_tokens & catalog_tokens
+    if overlap:
+        return True
+
+    # Substring fallback: catalog titles often embed the local name verbatim.
+    ln = _norm(local_name)
+    cn = _norm(catalog_name)
+    if len(ln) >= 4 and (ln in cn or cn in ln):
+        return True
+
+    return False
+
+
 # ── Token helpers ───────────────────────────────────────────────────────
 
 
@@ -413,11 +473,19 @@ class MercadoLivreAdapter(MarketplaceAdapter):
     # Catalog products (produto de catálogo do ML por EAN)
     # ------------------------------------------------------------------
 
-    async def search_catalog_by_ean(self, ean: str) -> dict[str, Any] | None:
+    async def search_catalog_by_ean(
+        self, ean: str, local_name: str | None = None
+    ) -> dict[str, Any] | None:
         """Search the ML catalog for a product by EAN (barcode).
 
         Returns the first active catalog product match (``catalog_product_id``
         plus name/pictures) or ``None`` when nothing is found.
+
+        When ``local_name`` is provided, the matched catalog product is
+        validated against the local product name (keyword overlap). A clearly
+        incompatible match (e.g. "Lenovo Thinkpad" vs "PENEIRA") is rejected
+        and ``None`` is returned, so the caller can fall back to a manual
+        listing instead of publishing under a wrong catalog product.
         """
         params = {"status": "active", "site_id": "MLB", "q": ean}
         try:
@@ -429,13 +497,21 @@ class MercadoLivreAdapter(MarketplaceAdapter):
                 logger.info("ML: no catalog product for EAN %s", ean)
                 return None
             p = results[0]
+            catalog_name = p.get("name") or p.get("title") or ""
             logger.info(
                 "ML: catalog product for EAN %s → %s (%s)",
-                ean, p.get("id"), (p.get("name") or "")[:50],
+                ean, p.get("id"), catalog_name[:50],
             )
+            if local_name and not _catalog_matches(local_name, catalog_name):
+                logger.warning(
+                    "ML: catalog product %s (%s) does NOT match local product "
+                    "'%s' (EAN %s) — rejecting match",
+                    p.get("id"), catalog_name[:60], local_name, ean,
+                )
+                return None
             return {
                 "catalog_product_id": p.get("id"),
-                "name": p.get("name", p.get("title", "")),
+                "name": catalog_name,
                 "pictures": p.get("pictures", []),
                 "status": p.get("status"),
                 "domain_id": p.get("domain_id"),
