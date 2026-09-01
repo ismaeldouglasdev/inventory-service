@@ -281,7 +281,7 @@ async def download_apk():
 
 # ── SEO (robots.txt + sitemap.xml) ───────────────────────────────────────
 # Registrados ANTES do catch-all da SPA para não serem sombreados.
-SITE_URL = "https://loja-online-82t7.onrender.com"
+SITE_URL = "https://loja-online-kmg8.onrender.com"
 SITEMAP_MAX_URLS = 500
 
 

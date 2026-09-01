@@ -2,7 +2,7 @@
 
 ## Contexto
 
-O site da loja (https://loja-online-82t7.onrender.com) roda no Render com SQLite próprio.
+O site da loja (https://loja-online-kmg8.onrender.com) roda no Render com SQLite próprio.
 O PC da loja roda inventory-service local com OSPOS MySQL.
 **Problema:** atualizações no PC da loja (estoque, fotos) não chegam no Render.
 
@@ -36,7 +36,7 @@ git pull origin sync/prod-data
 
 ```bash
 # Editar /home/ismael/inventory-service/.env e adicionar:
-PUSH_SYNC_URL=https://loja-online-82t7.onrender.com
+PUSH_SYNC_URL=https://loja-online-kmg8.onrender.com
 PUSH_SYNC_API_KEY=<a-chave-que-voce-quiser>
 ```
 
@@ -59,10 +59,10 @@ curl -X POST "http://localhost:8000/v1/store/sync?mode=full&min_stock=0"
 
 ```bash
 # Verificar se os produtos chegaram
-curl -s "https://loja-online-82t7.onrender.com/v1/store/products?per_page=5" | python3 -m json.tool
+curl -s "https://loja-online-kmg8.onrender.com/v1/store/products?per_page=5" | python3 -m json.tool
 
 # Verificar se o produto "TÁBUA DE CORTES DE CARNE ARQPLAST" aparece
-curl -s "https://loja-online-82t7.onrender.com/v1/store/products?search=tábua" | python3 -m json.tool
+curl -s "https://loja-online-kmg8.onrender.com/v1/store/products?search=tábua" | python3 -m json.tool
 ```
 
 ## Fluxo automático (depois de configurado)

@@ -476,7 +476,7 @@ dda24c598 feat: product photo thumbnail in sales cart + modal image viewer
 - **Remote `origin`** aponta para `https://github.com/ismaeldouglasdev/opensourcepos.git` **sem token** (o PAT antigo, já revogado, foi removido do config). Autenticação via `gh auth setup-git` (CLI `gh` logado como `ismaeldouglasdev`).
 
 ## Loja-online — Elshaday Utilidades (`loja-online/`)
-- **Deploy:** Render (`loja-online-82t7.onrender.com`) — React 19 + Vite 8 + Tailwind 4
+- **Deploy:** Render (`loja-online-kmg8.onrender.com`) — React 19 + Vite 8 + Tailwind 4
 - **Produção:** `http://localhost:5173/` (dev local via Vite proxy)
 - **Nome:** "Elshaday Utilidades" (Layout.tsx, Checkout.tsx WhatsApp msg)
 - **Páginas:** Home (grid + busca + filtros), Detalhe (foto + upload + WhatsApp), Checkout, Captura, Admin

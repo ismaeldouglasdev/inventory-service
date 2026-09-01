@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # ── FastAPI ────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: str = '["https://loja-online-82t7.onrender.com","https://lojaonline-murex.vercel.app","http://localhost:5173","http://localhost:3000","http://localhost:8080","http://localhost","http://127.0.0.1","http://192.168.15.6"]'
+    cors_origins: str = '["https://loja-online-kmg8.onrender.com","https://lojaonline-murex.vercel.app","http://localhost:5173","http://localhost:3000","http://localhost:8080","http://localhost","http://127.0.0.1","http://192.168.15.6"]'
     log_level: str = "INFO"
     log_format: str = "text"  # "json" or "text"
 
@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     rate_limit_admin: int = 20   # requests/min for admin endpoints
 
     # ── Push Sync (push local data to remote Render instance) ────────
-    push_sync_url: str = ""  # e.g. https://loja-online-82t7.onrender.com
+    push_sync_url: str = ""  # e.g. https://loja-online-kmg8.onrender.com
     push_sync_api_key: str = ""  # falls back to api_key if empty
 
     # ── CDC Agent ─────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ Loja online "Elshaday Utilidades" conectada ao OSPOS (PDV). Dois repositórios:
 
 | Repo | Stack | Deploy | URL |
 |------|-------|--------|-----|
-| **inventory-service** | Python/FastAPI + SQLite | Render (Docker, free) | https://loja-online-82t7.onrender.com |
+| **inventory-service** | Python/FastAPI + SQLite | Render (Docker, free) | https://loja-online-kmg8.onrender.com |
 | **loja-online** | React + TypeScript + Vite + Tailwind | Vercel | https://lojaonline-murex.vercel.app |
 
 ---
@@ -144,7 +144,7 @@ git push origin sync/prod-data
 ### Vercel (frontend)
 - **Projeto:** `lojaonline-murex`
 - **URL:** https://lojaonline-murex.vercel.app
-- **Variáveis de env:** `VITE_API_URL=https://loja-online-82t7.onrender.com`
+- **Variáveis de env:** `VITE_API_URL=https://loja-online-kmg8.onrender.com`
 
 ---
 

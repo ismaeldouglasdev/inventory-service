@@ -117,7 +117,7 @@ def trigger_deploy_and_wait() -> None:
 
 def validate_production() -> None:
     print("[4/4] Validando produção...")
-    with urllib.request.urlopen(f"https://loja-online-82t7.onrender.com/v1/health",
+    with urllib.request.urlopen(f"https://loja-online-kmg8.onrender.com/v1/health",
                                 timeout=60) as resp:
         body = json.load(resp)
     print(f"      ✅ Health: {body.get('status')} (db: {body.get('database')})")
