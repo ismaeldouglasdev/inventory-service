@@ -43,6 +43,7 @@ from app.api.v1.shopee import router as shopee_router
 from app.api.v1.store import _set_store_sync as _set_store_sync_ref
 from app.api.v1.store import router as store_router
 from app.api.v1.estoque import router as estoque_router
+from app.api.v1.notas import router as notas_router
 from app.api.v1.sell import _set_registry as _set_sell_registry
 from app.api.v1.sell import _set_circuit_breaker as _set_sell_cb
 from app.api.v1.sell import router as sell_router
@@ -56,6 +57,7 @@ from app.api.v1.agent_bridge import router as agent_bridge_router
 from app.api.v1.dashboard import router as dashboard_router, start_dashboard_poller, stop_dashboard_poller
 from app.api.v1.swarm import router as swarm_router
 from app.api.v1.observability import router as observability_router
+from app.api.v1.pdv import router as pdv_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
 from app.services.event_processor import EventStoreProcessor
@@ -256,12 +258,14 @@ app.include_router(woocommerce_router, prefix="/v1")
 app.include_router(shopee_router, prefix="/v1")
 app.include_router(store_router, prefix="/v1")
 app.include_router(estoque_router, prefix="/v1")
+app.include_router(notas_router, prefix="/v1")
 app.include_router(sell_router, prefix="/v1")
 app.include_router(onboarding_router, prefix="/v1")
 app.include_router(agent_bridge_router, prefix="/v1")
 app.include_router(dashboard_router, prefix="/v1")
 app.include_router(swarm_router, prefix="/v1")
 app.include_router(observability_router, prefix="/v1")
+app.include_router(pdv_router, prefix="/v1")
 
 # ── APK download ──────────────────────────────────────────────────────────
 APK_PATH = Path(__file__).resolve().parent.parent / "static" / "app-debug.apk"

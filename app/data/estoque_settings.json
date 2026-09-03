@@ -1,0 +1,10 @@
+{
+  "pin_hash": "62b4a761bd43e3883af12e862e48b5ecc3f9abac1ff1072ed29d30a1f94dd7d3",
+  "role": "owner",
+  "lock_enabled": false,
+  "schedule_enabled": false,
+  "schedule_start": "08:00",
+  "schedule_end": "18:00",
+  "hide_cost": true,
+  "hide_totals": true
+}

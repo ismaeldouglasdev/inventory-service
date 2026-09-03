@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-4o"
     ai_max_images: int = 4
 
+    # ── Gemini (leitura de notas fiscais via visão) ─────────────────────
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+    gemini_max_images: int = 6
+
     # ── Security ───────────────────────────────────────────────────────
     api_key: str = ""  # If set, requires X-API-Key header on sensitive endpoints
     admin_password: str = ""  # Painel admin (/v1/admin/auth/login) — DEVE ser definida via env
