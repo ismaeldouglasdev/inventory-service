@@ -367,3 +367,29 @@ async def ml_listings(
         for r in rows
     ]
     return {"count": len(listings), "listings": listings}
+
+
+# ── Adoption (reconcile existing ML listings) ────────────────────────────
+
+
+@router.post("/adopt", dependencies=[Depends(verify_admin_auth)])
+async def adopt_listings(
+    dry_run: bool = Query(False, description="Simulate without persisting"),
+) -> dict[str, Any]:
+    """Adopt listings published directly on ML into the local mapping.
+
+    Scans the seller's items, matches each GTIN to an active OSPOS product,
+    writes ``product_mapping`` + ``channel_product_mapping`` and backfills
+    ``seller_custom_field`` so stock/price sync and order processing work for
+    listings that never went through ``/publish``.
+
+    Run with ``dry_run=true`` first to preview the counts — nothing is written.
+    """
+    from app.services.ml_adopt import adopt_existing_listings
+
+    adapter = _get_adapter()
+    try:
+        return await adopt_existing_listings(adapter, dry_run=dry_run)
+    except Exception as exc:
+        logger.error("ML adopt failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"ML adopt failed: {exc}")
