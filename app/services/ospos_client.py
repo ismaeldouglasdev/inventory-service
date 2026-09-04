@@ -73,6 +73,44 @@ async def find_active_item_by_barcode(sku: str) -> Optional[int]:
     return row[0] if row else None
 
 
+async def find_active_item_by_sku(sku: str) -> Optional[int]:
+    """Resolve an active OSPOS item from a store SKU.
+
+    A SKU is normally the barcode (``item_number``), but items without a
+    barcode get ``sku = str(item_id)`` from the store sync. Tries the
+    barcode first, then falls back to a numeric ``item_id`` lookup.
+    """
+    item_id = await find_active_item_by_barcode(sku)
+    if item_id is not None:
+        return item_id
+    if sku.isdigit():
+        pool = await _pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT item_id FROM ospos_items "
+                    "WHERE item_id=%s AND deleted=0 LIMIT 1",
+                    (int(sku),),
+                )
+                row = await cur.fetchone()
+        return row[0] if row else None
+    return None
+
+
+async def fetch_item_stock(item_id: int, location_id: int = 1) -> float:
+    """Return the current stock quantity of an OSPOS item at a location."""
+    pool = await _pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT COALESCE(quantity, 0) FROM ospos_item_quantities "
+                "WHERE item_id=%s AND location_id=%s LIMIT 1",
+                (item_id, location_id),
+            )
+            row = await cur.fetchone()
+    return float(row[0]) if row else 0.0
+
+
 async def resolve_photo_target(ospos_id: int, sku: str) -> Optional[int]:
     """Resolve which OSPOS item should receive a product photo.
 

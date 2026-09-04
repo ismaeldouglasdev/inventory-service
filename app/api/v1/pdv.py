@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.services import ospos_client
@@ -178,8 +178,20 @@ async def _find_existing_sale(pool, client_sale_id: str) -> Optional[int]:
 
 
 @router.post("/sale", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
-async def create_sale(payload: PdvSaleRequest, request: Request) -> dict[str, Any]:
+async def create_sale(payload: PdvSaleRequest) -> dict[str, Any]:
     """Write a completed POS sale into OSPOS (mirrors Sale::save_value).
+
+    HTTP entry point — delegates to :func:`write_ospos_sale`, which is also
+    reused by the Mercado Livre webhook so ML sales hit the real OSPOS
+    tables (not a local simulation).
+    """
+    return await write_ospos_sale(payload)
+
+
+async def write_ospos_sale(payload: PdvSaleRequest) -> dict[str, Any]:
+    """Write a completed sale into OSPOS (mirrors Sale::save_value).
+
+    Shared core for both ``POST /pdv/sale`` and the ML webhook processor.
 
     - Single transaction: sales → payments → sales_items → stock/inventory.
     - Stock is clamped at 0 and flagged (STOCK_ZERADO / STOCK_IRREGULAR),

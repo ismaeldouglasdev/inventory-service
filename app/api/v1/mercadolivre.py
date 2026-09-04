@@ -18,6 +18,7 @@ from app.database import get_session
 from app.models.product_mapping import ProductMapping
 from app.models.channel_product_mapping import ChannelProductMapping
 from app.schemas.product import ChannelPublishRequest
+from app.services import ospos_client
 from app.services.event_processor import create_event
 from app.utils.security import verify_admin_auth, verify_api_key
 
@@ -229,11 +230,11 @@ async def ml_webhook(
     tracking event is persisted in the EventStore so downstream processors
     (stock sync, order pipeline) can react.
 
-    For ``orders_v2`` the order is fetched from ML and each item is pushed
-    through the sell pipeline (reserve → confirm → propagate → commit) so the
-    OSPOS stock is deducted to match the ML sale. This runs as a background
-    task so the endpoint returns 200 within ML's 500ms window — ML deactivates
-    topics when the callback is slow.
+    For ``orders_v2`` the order is fetched from ML and written as a real
+    sale into OSPOS (``pdv.write_ospos_sale``), deducting stock and then
+    pushing the updated remaining stock back to ML. This runs as a
+    background task so the endpoint returns 200 within ML's 500ms window —
+    ML deactivates topics when the callback is slow.
     """
     adapter = _get_adapter()
     try:
@@ -279,64 +280,132 @@ async def _process_ml_order(
     order_id: str,
     source_event_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Fetch an ML order and run the sell pipeline for each mapped item.
+    """Fetch an ML order and write it as a REAL sale into OSPOS.
+
+    Maps each ML item to a local OSPOS item (via ``channel_product_mapping``
+    → SKU → active ``ospos_items.item_number``), then delegates to
+    ``pdv.write_ospos_sale`` so the sale is committed transactionally in the
+    OSPOS MySQL (sales + payments + sales_items + stock/inventory decrement),
+    with the same idempotency used by the POS app.
 
     Items whose ML id has no local mapping are skipped (not published through
     this service) and reported as ``skipped``.
     """
-    from app.services.sell_pipeline import SellPipeline
-    from app.adapters.registry import AdapterRegistry
+    from app.api.v1.pdv import (
+        PdvItem,
+        PdvPayment,
+        PdvSaleRequest,
+        write_ospos_sale,
+    )
 
     order = await adapter.fetch_order(order_id)
     if not order or not order.get("items"):
         logger.warning("ML order %s: no items to process", order_id)
         return []
 
-    pipeline = SellPipeline(_registry or AdapterRegistry())
+    # Only write a real sale for orders that actually went through.
+    order_status = order.get("status") or ""
+    if order_status in ("cancelled", "cancelled_by_buyer", "payment_required"):
+        logger.info("ML order %s: skipped (status=%s)", order_id, order_status)
+        return [
+            {
+                "external_id": "-",
+                "sku": None,
+                "status": "skipped",
+                "reason": f"order status {order_status}",
+            }
+        ]
+
+    pdv_items: list[PdvItem] = []
+    sold_skus: list[tuple[str, int]] = []  # (sku, ospos item_id) for post-sale ML stock sync
     results: list[dict[str, Any]] = []
-    for item in order["items"]:
-        sku = await adapter.get_sku_by_external_id(item["external_id"])
+    for it in order["items"]:
+        sku = await adapter.get_sku_by_external_id(it["external_id"])
         if not sku:
             results.append(
                 {
-                    "external_id": item["external_id"],
+                    "external_id": it["external_id"],
                     "status": "skipped",
                     "reason": "no local mapping",
                 }
             )
             continue
-        try:
-            res = await pipeline.sell(
-                sku=sku,
-                quantity=item["quantity"],
-                unit_price=item["unit_price"],
-                channel="mercadolivre",
-                order_id=order_id,
-                source_event_id=source_event_id,
-                notes=f"ML order {order_id}",
-            )
+
+        item_id = await ospos_client.find_active_item_by_sku(sku)
+        if item_id is None:
             results.append(
                 {
+                    "external_id": it["external_id"],
                     "sku": sku,
-                    "external_id": item["external_id"],
-                    "quantity": item["quantity"],
-                    "status": res.get("status", "processed"),
-                    "reservation_id": res.get("id"),
+                    "status": "skipped",
+                    "reason": "no active OSPOS item for SKU",
                 }
             )
-        except Exception as exc:
-            logger.error(
-                "ML order %s: sell pipeline failed for SKU %s: %s",
-                order_id, sku, exc,
+            continue
+
+        pdv_items.append(
+            PdvItem(
+                item_id=item_id,
+                line=len(pdv_items),
+                quantity=float(it["quantity"]),
+                price=float(it["unit_price"]),
             )
-            results.append(
-                {
-                    "sku": sku,
-                    "external_id": item["external_id"],
-                    "status": "error",
-                    "reason": str(exc),
-                }
-            )
+        )
+        sold_skus.append((sku, item_id))
+
+    if not pdv_items:
+        logger.warning("ML order %s: no mappable items (%d skipped)", order_id, len(results))
+        return results
+
+    total = round(sum(it.quantity * it.price for it in pdv_items), 2)
+    payload = PdvSaleRequest(
+        items=pdv_items,
+        payments=[PdvPayment(payment_type="Mercado Livre", payment_amount=total)],
+        employee_id=1,
+        comment=f"ML order {order_id}",
+        client_sale_id=f"ml-{order_id}",
+    )
+    try:
+        sale = await write_ospos_sale(payload)
+        ml_synced = True
+        if not sale.get("duplicate"):
+            # A baixa real decrementa ospos_item_quantities, que o CDC não
+            # observa (ele diffs ospos_items). Sincroniza o ML agora com o
+            # estoque remanescente REAL, lido do MySQL após a venda.
+            for sku, item_id in sold_skus:
+                remaining = await ospos_client.fetch_item_stock(item_id)
+                synced = await adapter.update_stock(sku, int(remaining))
+                if not synced:
+                    ml_synced = False
+                    logger.warning(
+                        "ML order %s: ML stock sync failed for SKU %s (remaining=%d)",
+                        order_id, sku, int(remaining),
+                    )
+        results.append(
+            {
+                "external_id": ",".join(it["external_id"] for it in order["items"]),
+                "sku": ",".join(str(p.item_id) for p in pdv_items),
+                "quantity": sum(it.quantity for it in pdv_items),
+                "status": "sale_written" if not sale.get("duplicate") else "duplicate",
+                "sale_id": sale.get("sale_id"),
+                "total": total,
+                "ml_stock_synced": ml_synced,
+            }
+        )
+        logger.info(
+            "ML order %s: OSPOS sale %s (duplicate=%s, R$%.2f)",
+            order_id, sale.get("sale_id"), sale.get("duplicate", False), total,
+        )
+    except Exception as exc:
+        logger.error("ML order %s: OSPOS sale write failed: %s", order_id, exc)
+        results.append(
+            {
+                "external_id": ",".join(it["external_id"] for it in order["items"]),
+                "sku": ",".join(str(p.item_id) for p in pdv_items),
+                "status": "error",
+                "reason": str(exc),
+            }
+        )
     return results
 
 
