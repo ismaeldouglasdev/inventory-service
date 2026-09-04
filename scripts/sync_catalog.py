@@ -29,6 +29,19 @@ CATALOG_PATH = ROOT / "catalog.json"
 PHOTOS_DIR = ROOT / "photos"
 
 
+def _headers() -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    env_path = ROOT / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("API_KEY="):
+                key = line.split("=", 1)[1].strip().strip('"')
+                if key:
+                    headers["X-API-Key"] = key
+                break
+    return headers
+
+
 def fetch_catalog(with_deleted: bool) -> list[dict]:
     items: list[dict] = []
     offset = 0
@@ -37,7 +50,7 @@ def fetch_catalog(with_deleted: bool) -> list[dict]:
         url = f"{BASE_URL}?limit={LIMIT}&offset={offset}"
         if with_deleted:
             url += "&include_deleted=true"
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        req = urllib.request.Request(url, headers=_headers())
         with urllib.request.urlopen(req, timeout=90) as resp:
             total = int(resp.headers.get("X-Total-Count", 0) or 0)
             batch = json.load(resp)
