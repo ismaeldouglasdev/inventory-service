@@ -79,6 +79,113 @@ async def verify_admin_auth(
         )
 
 
+def create_customer_token(customer_id: int) -> str:
+    """Issue an HS256 customer token (sub=<customer_id>, scope=customer, 24h)."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(customer_id),
+        "scope": "customer",
+        "iat": now,
+        "exp": now + timedelta(seconds=JWT_EXPIRES_SECONDS),
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm="HS256")
+
+
+async def get_optional_customer(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_admin_bearer),
+) -> Optional[int]:
+    """Resolve a customer id IF a valid customer token is present, else None.
+
+    Guest checkout support for POST /orders: no credentials → None (guest
+    order allowed); a present-but-invalid token still raises 401/403 so a
+    broken session never silently downgrades the caller to guest.
+    """
+    if credentials is None or not credentials.credentials:
+        return None
+    return await verify_customer_auth(credentials)
+
+
+async def resolve_customer_or_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_admin_bearer),
+) -> tuple[str, Optional[int]]:
+    """Resolve the viewer of an order: ("customer", id) or ("admin", None).
+
+    Used by GET /orders/{id} where both an authenticated owner (customer
+    scope) and an admin (sub=admin) may read. Any other/missing/invalid
+    token is rejected with 401 (missing/invalid) or 403 (wrong scope).
+    """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Não autorizado",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # PyJWT 2.x emite DeprecationWarning p/ algoritmo inseguro
+            payload = jwt.decode(credentials.credentials, get_jwt_secret(), algorithms=["HS256"])
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessão expirada ou inválida",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if payload.get("scope") == "customer":
+        try:
+            return ("customer", int(payload["sub"]))
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token inválido",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    if payload.get("sub") == "admin":
+        return ("admin", None)
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Token sem escopo de acesso a pedidos",
+    )
+
+
+async def verify_customer_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_admin_bearer),
+) -> int:
+    """Require a valid customer Bearer JWT; return the authenticated customer id.
+
+    Rejects admin tokens (sub=admin) and tokens without scope=customer, so
+    the customer endpoints can never be reached with admin credentials.
+    """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Não autorizado",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # PyJWT 2.x emite DeprecationWarning p/ algoritmo inseguro
+            payload = jwt.decode(credentials.credentials, get_jwt_secret(), algorithms=["HS256"])
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sessão expirada ou inválida",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if payload.get("scope") != "customer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token sem escopo de cliente",
+        )
+    try:
+        return int(payload["sub"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 async def verify_api_key(request: Request, api_key: Optional[str] = Depends(api_key_header)) -> None:
     """Protect sensitive endpoints. REQUIRES a valid API key.
 
@@ -107,6 +214,44 @@ async def verify_api_key(request: Request, api_key: Optional[str] = Depends(api_
             detail="Missing or invalid API key",
             headers={"WWW-Authenticate": "API-Key"},
         )
+
+
+# ── Password Hashing (PBKDF2-SHA256, stdlib only) ─────────────
+_PBKDF2_ITERATIONS = 100_000
+_PBKDF2_SALT_BYTES = 16
+
+
+def hash_password(password: str) -> str:
+    """Hash a plaintext password with PBKDF2-SHA256 (no passlib/bcrypt dep).
+
+    Stored format: ``pbkdf2_sha256$<iterations>$<salt_hex>$<digest_hex>``.
+    """
+    import hashlib
+    import secrets as _secrets
+
+    salt = _secrets.token_bytes(_PBKDF2_SALT_BYTES)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS
+    )
+    return f"pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """Verify a plaintext password against a stored PBKDF2 hash (constant-time)."""
+    import hashlib
+    import hmac as _hmac
+
+    try:
+        scheme, iterations_str, salt_hex, digest_hex = stored.split("$")
+        if scheme != "pbkdf2_sha256":
+            return False
+        iterations = int(iterations_str)
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(digest_hex)
+    except (ValueError, TypeError):
+        return False
+    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return _hmac.compare_digest(actual, expected)
 
 
 # ── IP-based Rate Limiter ────────────────────────────────────
