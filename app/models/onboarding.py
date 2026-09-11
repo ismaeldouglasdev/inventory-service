@@ -1,7 +1,7 @@
-"""Placeholder models for AI-powered onboarding (Phase 4).
+"""Onboarding models — AI-powered product onboarding (Phase 4).
 
-These are basic stubs. Full logic (image upload, LLM classification,
-attribute extraction) will be implemented in Phase 4.
+Handles batch onboarding sessions with image upload, LLM classification,
+and attribute extraction for products.
 """
 
 from __future__ import annotations
@@ -16,10 +16,7 @@ from app.database import Base
 
 
 class OnboardingSession(Base):
-    """Tracks a batch onboarding process for one or more products.
-
-    TODO: implement in Phase 4 — AI Onboarding & Enrichment
-    """
+    """Tracks a batch onboarding process for one or more products."""
 
     __tablename__ = "onboarding_sessions"
 
@@ -47,10 +44,7 @@ class OnboardingSession(Base):
 
 
 class OnboardingImage(Base):
-    """Individual image uploaded as part of an onboarding session.
-
-    TODO: implement in Phase 4 — AI Onboarding & Enrichment
-    """
+    """Individual image uploaded as part of an onboarding session."""
 
     __tablename__ = "onboarding_images"
 

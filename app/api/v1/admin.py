@@ -228,7 +228,7 @@ async def list_admin_products(
     )
 
 
-@router.get("/health/detailed")
+@router.get("/health/detailed", dependencies=[Depends(verify_admin_auth), Depends(rate_limit_admin)])
 async def detailed_health(session: AsyncSession = Depends(get_session)):
     """Detailed system health overview."""
     # DB check

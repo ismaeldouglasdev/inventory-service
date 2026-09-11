@@ -10,6 +10,7 @@ from app.models.channel_variant_mapping import ChannelVariantMapping
 from app.models.channel_fee_config import ChannelFeeConfig
 from app.models.channel_state import ChannelState
 from app.models.event_store import EventStore
+from app.models.event_store_archive import EventStoreArchive
 from app.models.onboarding import OnboardingSession, OnboardingImage
 from app.models.store_product import StoreProduct
 from app.models.inventory_state import InventoryState
@@ -24,6 +25,7 @@ __all__ = [
     "ChannelFeeConfig",
     "ChannelState",
     "EventStore",
+    "EventStoreArchive",
     "OnboardingSession",
     "OnboardingImage",
     "StoreProduct",
