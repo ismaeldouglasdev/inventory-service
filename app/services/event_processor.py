@@ -388,6 +388,16 @@ class EventStoreProcessor:
         if event.channel:
             return [event.channel]
 
+        # product.created must be explicit about its target channel. Without
+        # one we cannot safely decide which marketplace to publish to, so we
+        # refuse to broadcast it (avoids duplicate publishing on ML).
+        if event.event_type == "product.created":
+            logger.warning(
+                "Evento %s: product.created sem canal explícito — não difundir",
+                event.id,
+            )
+            return []
+
         payload = json.loads(event.payload)
         stock = payload.get("quantity") if event.event_type == "stock.updated" else None
         return await self._dispatcher.resolve(

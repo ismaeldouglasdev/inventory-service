@@ -78,6 +78,20 @@ class ItemUpdate(BaseModel):
     quantity: Optional[float] = None
 
 
+class BulkItem(BaseModel):
+    item_number: str = ""
+    name: str = ""
+    cost_price: float = 0.0
+    unit_price: float = 0.0
+
+
+class BulkUpsert(BaseModel):
+    items: list[BulkItem] = []
+
+
+_MAX_BULK = 300
+
+
 @router.get("/search")
 async def search(
     q: str = Query(..., min_length=1),
@@ -186,6 +200,123 @@ async def create_item(payload: ItemCreate, request: Request) -> dict[str, Any]:
     })
 
     return {"success": True, "item_id": item_id}
+
+
+@router.post("/bulk", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])
+async def bulk_upsert(payload: BulkUpsert, request: Request) -> dict[str, Any]:
+    """Mass upsert from an invoice note (owner app).
+
+    For each item: if an *active* item with the same ``item_number``
+    exists → refresh name/cost_price/unit_price (stock untouched);
+    otherwise create it with zero stock (ZERADO) + inventory row so the
+    OSPOS grid shows it. Per-item failures are collected in ``errors`` —
+    one bad line never kills the batch.
+    """
+    role = _assert_write_allowed(request)
+    items = payload.items or []
+
+    if not items:
+        raise HTTPException(status_code=400, detail="Nenhum item no lote")
+    if len(items) > _MAX_BULK:
+        raise HTTPException(status_code=400, detail=f"Lote grande demais (máximo {_MAX_BULK} itens)")
+
+    created: list[dict[str, Any]] = []
+    updated: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    pool = await ospos_client._pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for i, it in enumerate(items):
+                barcode = (it.item_number or "").strip()
+                name = (it.name or "").strip()
+                idx = {"index": i, "item_number": barcode}
+                try:
+                    if not barcode:
+                        errors.append({**idx, "error": "código vazio"})
+                        continue
+                    if barcode in seen:
+                        errors.append({**idx, "error": "código duplicado no lote"})
+                        continue
+                    seen.add(barcode)
+                    if not name:
+                        errors.append({**idx, "error": "nome vazio"})
+                        continue
+
+                    cost = round(it.cost_price, 2)
+                    unit = round(it.unit_price, 2)
+
+                    await cur.execute(
+                        "SELECT item_id FROM ospos_items WHERE item_number = %s AND deleted = 0 LIMIT 1",
+                        (barcode,),
+                    )
+                    row = await cur.fetchone()
+                    if row:
+                        item_id = int(row[0])
+                        await cur.execute(
+                            """
+                            UPDATE ospos_items
+                            SET name = %s, cost_price = %s, unit_price = %s, last_modified = NOW()
+                            WHERE item_id = %s
+                            """,
+                            (name, cost, unit, item_id),
+                        )
+                        updated.append({"item_id": item_id, "item_number": barcode})
+                    else:
+                        # Mirror create_item (receiving_quantity=1 is the OSPOS default
+                        # for stocked items; allow_alt_description/serialized/stock off).
+                        await cur.execute(
+                            """
+                            INSERT INTO ospos_items
+                                (name, item_number, category, description,
+                                 cost_price, unit_price, reorder_level, receiving_quantity,
+                                 allow_alt_description, is_serialized, stock_type, item_type,
+                                 deleted, last_modified)
+                            VALUES (%s, %s, '', '', %s, %s, 0, 1, 1, 0, 0, 0, 0, NOW())
+                            """,
+                            (name, barcode, cost, unit),
+                        )
+                        item_id = int(cur.lastrowid)
+                        await cur.execute(
+                            """
+                            INSERT INTO ospos_item_quantities (item_id, location_id, quantity, stock_status)
+                            VALUES (%s, 1, 0, 1)
+                            ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), stock_status = VALUES(stock_status)
+                            """,
+                            (item_id,),
+                        )
+                        await cur.execute(
+                            """
+                            INSERT INTO ospos_inventory
+                                (trans_items, trans_user, trans_date, trans_comment, trans_location, trans_inventory)
+                            VALUES (%s, 1, NOW(), 'Criado pela Nota (lote)', 1, 0)
+                            """,
+                            (item_id,),
+                        )
+                        created.append({"item_id": item_id, "item_number": barcode})
+                except Exception as exc:
+                    logger.warning("Estoque bulk item[%d] %s: %s", i, barcode, exc)
+                    errors.append({**idx, "error": str(exc)[:160]})
+
+    # Single broadcast → the items grid refreshes once (no toast spam).
+    await _item_update_notifier.broadcast({
+        "type": "item_update",
+        "action": "bulk",
+        "item_id": None,
+        "item_name": f"{len(created)} criados, {len(updated)} atualizados",
+        "ts": _dt.now().isoformat(timespec="seconds"),
+    })
+
+    _audit("bulk", role, None, name=_requester_name(request), detail={
+        "created": len(created),
+        "updated": len(updated),
+        "errors": len(errors),
+        "created_ids": [c["item_id"] for c in created][:_MAX_BULK],
+    })
+
+    logger.info("Estoque bulk: %d created, %d updated, %d errors", len(created), len(updated), len(errors))
+    return {"success": True, "created": created, "updated": updated, "errors": errors}
 
 
 @router.patch("/item/{item_id}", dependencies=[Depends(verify_api_key), Depends(rate_limit_write)])

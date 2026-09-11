@@ -702,3 +702,14 @@ adb logcat -s DashboardRepo:V                     # logs do WS (onOpen/onClosed/
 - **ospos-dashboard-app:** git init + .gitignore (exclui .gradle, build/, *.apk, *.keystore, local.properties) + commit inicial (42 arquivos, 3375 linhas) + fix offline cache (3 arquivos, 60 linhas).
 - **Aplicado em:** 19/ago/2026.
 
+### 47. Webhook ML orders_v2 — escrita de venda REAL no OSPOS + sync de estoque
+- **Arquivos:** `app/api/v1/pdv.py`, `app/api/v1/mercadolivre.py`, `app/services/ospos_client.py`
+- **Sintoma:** o webhook `orders_v2` usava o `SellPipeline` (simulação local: reservava estoque em SQLite, sem tocar o OSPOS MySQL real). O CDC só faz diff de `ospos_items` (receiving_quantity) — a baixa real no PDV decrementa `ospos_item_quantities`, que o CDC **não observa**. Resultado: estoque do ML **não era atualizado** após venda no ML.
+- **Solução:**
+  1. `pdv.py`: extraído `write_ospos_sale()` (baixa transacional real: sales → payments → sales_items → stock/inventory, com idempotência via `client_sale_id`); `create_sale()` vira wrapper fino.
+  2. `ospos_client.py`: `find_active_item_by_sku()` — resolve item ativo por barcode (`item_number`) + fallback numérico (`sku = str(item_id)` para itens sem EAN); `fetch_item_stock()` — lê estoque remanescente real de `ospos_item_quantities` (location 1).
+  3. `mercadolivre.py`: `_process_ml_order()` reescrito — `fetch_order` → filtro de status (`cancelled`/`cancelled_by_buyer`/`payment_required`) → mapeamento por SKU → `write_ospos_sale()` → **pós-baixa sincroniza estoque ML** com o valor real remanescente (`adapter.update_stock(sku, remaining)`).
+  4. Docstring do `ml_webhook` atualizada (não menciona mais sell pipeline).
+- **Verificação:** `py_compile` OK; serviço reiniciado (PID 43527); helpers testados (EAN 7898750053345 → id 9301, fallback `str(id)` → 9301, inexistente → None/0.0); webhook fake order 99999999999999 → HTTP 200, `fetch_order` retorna None graciosamente, **zero escrita** em OSPOS; `event_processor.py` ignora `orders_v2` (sem handler em EVENT_HANDLERS) → sem dupla execução; `SellPipeline` agora só em `sell.py` (API manual).
+- **Aplicado em:** 04/set/2026. Commit `17c37de` (branch `sync/prod-data`, pushed).
+
