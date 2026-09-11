@@ -29,6 +29,9 @@ from app.models import (  # noqa: F401  isort:skip
     StoreProduct,
     InventoryState,
     ProcessedAction,
+    Customer,
+    Order,
+    OrderItem,
 )
 
 # ── Alembic Config ─────────────────────────────────────────────────────

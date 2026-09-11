@@ -12,11 +12,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.adapters.implementations.shopee import ShopeeAdapter, ShopeeTokenStore, _token_store
 from app.adapters.registry import AdapterRegistry
 from app.config import settings
+from app.utils.security import verify_admin_auth, verify_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def _set_registry(r: AdapterRegistry) -> None:
     _registry = r
 
 
-@router.get("/auth-url")
+@router.get("/auth-url", dependencies=[Depends(verify_admin_auth)])
 async def auth_url() -> dict[str, str]:
     """Return the Shopee partner auth URL for OAuth flow."""
     if not settings.shopee_partner_id or not settings.shopee_api_key:
@@ -60,7 +61,7 @@ async def callback(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(verify_admin_auth)])
 async def status() -> dict[str, Any]:
     """Check if Shopee adapter is authenticated."""
     adapter = _get_adapter()
@@ -73,7 +74,7 @@ async def status() -> dict[str, Any]:
     }
 
 
-@router.post("/refresh")
+@router.post("/refresh", dependencies=[Depends(verify_admin_auth)])
 async def refresh() -> dict[str, bool]:
     """Manually trigger a token refresh."""
     ok = await ShopeeAdapter.refresh_access_token()

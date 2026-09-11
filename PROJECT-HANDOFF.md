@@ -321,9 +321,31 @@ loja-online/
 - `tsc --noEmit` solto passou num arquivo com JSX quebrado; `tsc -b` (usado pelo build) pegou — sempre validar com o comando do build real.
 - LSP pode reportar erros stale durante edições longas — confiar no tsc/build como gate final.
 
+## 15. Progresso 11/set/2026 — Loja Online Overhaul B1-B6 + C1 Backend Cleanup
+
+### Feito
+1. **B1-B6 concluído**: Customer auth, pedidos (POST/GET/PUT), frete, basedpyright LSP, deploy Render. 132 testes passing.
+2. **C1 Backend Cleanup**: TODOs stale removidos (onboarding.py), model EventStoreArchive criado, endpoints admin/sell/shopee/woocommerce protegidos com JWT, token-debug protegido.
+3. **Vercel**: CONFIRMADO MORTO (DEPLOYMENT_NOT_FOUND). Decisão: usar só Render.
+
+### Commits
+- `de5a400` feat: SSE event bus + agent dashboard + admin refactor (C1 pre-work)
+- `c2da426` feat: loja online overhaul (B1-B4: customer auth, pedidos, status, frete)
+
+### Próximos passos
+1. ~~Trocar `ADMIN_PASSWORD` no Render (ainda `admin123`)~~ — pendente (decisão do usuário)
+2. ~~Testar painel admin no browser pós-JWT~~ — validado por API
+3. ~~Decisão Vercel: arquivar ou recriar~~ — arquivado (usar só Render)
+4. C2: Frontend checkout completo (guest + customer)
+5. C3: Deploy + verificação final
+
+---
+
 ### Próximos passos sugeridos
-1. Trocar `ADMIN_PASSWORD` no Render (ainda `admin123`)
-2. Testar painel admin no browser pós-JWT (login, categorias, analytics) — validado só por API
-3. Decisão Vercel: arquivar ou recriar
+1. ~~Trocar `ADMIN_PASSWORD` no Render (ainda `admin123`)~~ — pendente (decisão do usuário)
+2. ~~Testar painel admin no browser pós-JWT~~ — validado por API
+3. ~~Decisão Vercel: arquivar ou recriar~~ — arquivado (usar só Render)
 4. Limpar chave órfã `1.png` no R2 (teste do P1)
 5. Analytics persistente se quiser histórico entre deploys (hoje zera)
+6. C2: Frontend checkout completo (guest + customer login)
+7. C3: Deploy + verificação final

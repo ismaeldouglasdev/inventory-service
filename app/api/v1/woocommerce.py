@@ -18,6 +18,8 @@ from app.models.channel_product_mapping import ChannelProductMapping
 from app.schemas.product import ChannelPublishRequest
 from app.services.event_processor import create_event
 
+from app.utils.security import verify_admin_auth, verify_api_key
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/woocommerce", tags=["woocommerce"])
@@ -42,7 +44,7 @@ def _get_adapter() -> WooCommerceAdapter:
         raise HTTPException(status_code=503, detail="WooCommerce adapter not registered")
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(verify_admin_auth)])
 async def wc_status() -> dict[str, Any]:
     """Check whether the WooCommerce adapter is authenticated."""
     adapter = _get_adapter()
@@ -53,7 +55,7 @@ async def wc_status() -> dict[str, Any]:
     }
 
 
-@router.post("/publish", status_code=201)
+@router.post("/publish", status_code=201, dependencies=[Depends(verify_api_key)])
 async def publish_product(
     body: ChannelPublishRequest,
     session: AsyncSession = Depends(get_session),
