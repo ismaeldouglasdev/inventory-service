@@ -367,15 +367,16 @@ async def update_item(item_id: int, payload: ItemUpdate, request: Request) -> di
                     (item_id,),
                 )
                 old_qty = float(old_qty_row[0]) if old_qty_row else 0.0
-                # ZERADO when empty; never auto-clears IRREGULAR (that is a
-                # deliberate state from the receiving flow).
+                # Status recomputed from the quantity every time (same rule as
+                # OSPOS Items::postSave): >0 → OK, ==0 → ZERADO. A manual
+                # stock correction must clear a stale IRREGULAR flag.
                 await cur.execute(
                     """
                     INSERT INTO ospos_item_quantities (item_id, location_id, quantity, stock_status)
                     VALUES (%s, 1, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         quantity = VALUES(quantity),
-                        stock_status = IF(stock_status = 2, 2, IF(VALUES(quantity) <= 0, 1, 0))
+                        stock_status = IF(VALUES(quantity) <= 0, 1, 0)
                     """,
                     (item_id, new_qty, 0 if new_qty > 0 else 1),
                 )
