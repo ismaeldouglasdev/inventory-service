@@ -66,6 +66,7 @@ from app.api.v1.orders import admin_orders_router
 from app.api.v1.shipping import router as shipping_router
 from app.config import settings
 from app.services.cdc_agent import CDCAgent
+from app.services.ml_order_poller import MLOrderPoller
 from app.services.event_processor import EventStoreProcessor
 from app.services.store_sync import StoreSync
 from app.services.circuit_breaker import CircuitBreaker
@@ -81,6 +82,7 @@ logger = logging.getLogger(__name__)
 # ── Globals ──────────────────────────────────────────────────────────────
 registry = AdapterRegistry()
 cdc_agent = CDCAgent(poll_interval=settings.cdc_poll_interval)
+ml_poller = MLOrderPoller(poll_interval=settings.ml_poll_interval)
 event_processor = EventStoreProcessor(registry, poll_interval=5.0)
 circuit_breaker = CircuitBreaker()
 
@@ -149,6 +151,14 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     start_dashboard_poller()
     logger.info("Dashboard poller started")
 
+    # ── ML Order Poller (fallback webhook orders_v2) ──────────────
+    ml_poll_task: asyncio.Task | None = None
+    if settings.ml_poll_enabled and settings.ml_client_id and settings.ml_client_secret:
+        ml_poll_task = asyncio.create_task(ml_poller.run_forever())
+        logger.info("ML Order Poller started (poll every %ds)", settings.ml_poll_interval)
+    else:
+        logger.info("ML Order Poller disabled (ML_POLL_ENABLED=false or ML credentials missing)")
+
     processor_task = asyncio.create_task(event_processor.run_forever())
     logger.info("EventStore Processor started (poll every 5s)")
 
@@ -164,6 +174,14 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         cdc_task.cancel()
         try:
             await cdc_task
+        except asyncio.CancelledError:
+            pass
+
+    if ml_poll_task is not None:
+        ml_poller.stop()
+        ml_poll_task.cancel()
+        try:
+            await ml_poll_task
         except asyncio.CancelledError:
             pass
 

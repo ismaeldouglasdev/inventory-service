@@ -119,6 +119,10 @@ class Settings(BaseSettings):
     cdc_enabled: bool = True
     cdc_poll_interval: int = 30  # seconds
 
+    # ── ML Order Poller (fallback do webhook orders_v2) ───────────────
+    ml_poll_enabled: bool = True
+    ml_poll_interval: int = 60  # seconds
+
     # ── Convenience properties ─────────────────────────────────────────
     @property
     def cors_origins_list(self) -> list[str]:
