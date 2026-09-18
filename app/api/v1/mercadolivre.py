@@ -17,7 +17,7 @@ from app.config import settings
 from app.database import get_session
 from app.models.product_mapping import ProductMapping
 from app.models.channel_product_mapping import ChannelProductMapping
-from app.schemas.product import ChannelPublishRequest
+from app.schemas.product import ChannelPublishRequest, ChannelVariationsPublishRequest
 from app.services import ospos_client
 from app.services.event_processor import create_event
 from app.utils.security import verify_admin_auth, verify_api_key
@@ -462,3 +462,107 @@ async def adopt_listings(
     except Exception as exc:
         logger.error("ML adopt failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"ML adopt failed: {exc}")
+
+
+# ── Variations publish (4 ospos SKUs → 1 ML listing with COLOR variations) ──
+
+
+@router.post(
+    "/publish-variations",
+    status_code=201,
+    dependencies=[Depends(verify_api_key)],
+)
+async def publish_variations(
+    body: ChannelVariationsPublishRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Publish the 4 ospos SKUs as ONE Mercado Livre listing with 4 COLOR variations.
+
+    Mirrors ``POST /publish`` 1:1 (same security: ``verify_api_key``). The
+    body carries ``variations[]`` — 4 entries, one per ospos SKU
+    (Azul/Roxa/Rosa/Verde), each contributing its own price, stock, picture
+    and ``seller_custom_field`` (the SKU), so the buyer picks the color in
+    the listing page.
+
+    ``dry_run`` (default ``True``) builds and validates the full body WITHOUT
+    calling ML or persisting anything. Real publishing (``dry_run=False``)
+    only happens after explicit user OK from a successful dry-run.
+    """
+    from sqlalchemy import select
+
+    if not body.variations:
+        raise HTTPException(status_code=422, detail="variations[] must not be empty")
+
+    mother_sku = str(body.variations[0].get("sku", ""))
+
+    # 1. Check if already published (variations share the ChannelProductMapping row)
+    result = await session.execute(
+        select(ChannelProductMapping).where(
+            ChannelProductMapping.sku == mother_sku,
+            ChannelProductMapping.channel == "mercadolivre",
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return {
+            "status": "already_published",
+            "channel": "mercadolivre",
+            "external_id": existing.external_id,
+            "external_url": existing.external_url,
+        }
+
+    # 2. Adapter + auth (mirror publish) — dry_run doesn't need ML auth
+    adapter = _get_adapter()
+    if not body.dry_run:
+        authed = await adapter.authenticate()
+        if not authed:
+            raise HTTPException(
+                status_code=401,
+                detail="ML not authenticated. Visit /v1/mercadolivre/auth-url first.",
+            )
+
+    # 3. Publish via variations adapter
+    try:
+        result_data = await adapter.publish_product_with_variations(
+            variations=body.variations,
+            title=body.title,
+            category_id=body.category_id,
+            dry_run=body.dry_run,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        resp_text = getattr(getattr(exc, "response", None), "text", "")[:600]
+        detail = f"ML variations publish failed: {exc}"
+        if resp_text:
+            detail += f" — {resp_text}"
+        logger.error("ML variations publish failed: %s", resp_text or exc)
+        raise HTTPException(status_code=502, detail=detail) from exc
+
+    # 4. Tracking event (only on real publish)
+    event_id = None
+    if not body.dry_run:
+        event = create_event(
+            event_type="product.published_variations",
+            payload={
+                "title": body.title,
+                "channel": "mercadolivre",
+                "variations_count": len(body.variations),
+                "variations": [
+                    {k: v for k, v in v.items() if k != "pictures"}
+                    for v in body.variations
+                ],
+            },
+            sku=mother_sku,
+            channel="mercadolivre",
+        )
+        session.add(event)
+        await session.commit()
+        event_id = event.id
+
+    return {
+        "status": "published" if not body.dry_run else "dry_run",
+        "channel": "mercadolivre",
+        **result_data,
+        "event_id": event_id,
+    }

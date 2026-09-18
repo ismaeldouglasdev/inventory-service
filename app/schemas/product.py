@@ -72,3 +72,24 @@ class ChannelPublishRequest(BaseModel):
     category_id: str = ""  # channel-specific category ID
     pictures: list[str] = []
     attributes: list[dict] = []
+
+
+class ChannelVariationsPublishRequest(BaseModel):
+    """Product data for publishing a MOTHER listing + COLOR variations to ML.
+
+    The 4 ospos SKUs of the same product family (one per color) are grouped
+    into a SINGLE Mercado Livre listing with ``variations[]`` — each variation
+    carries its own COLOR ``attribute_combinations``, price, stock, picture
+    and seller_custom_field (the ospos SKU), so the buyer picks the color in
+    the listing page.
+
+    ``dry_run`` (default ``True``) builds and validates the full ML body
+    WITHOUT calling the ML API or persisting anything. Real publishing
+    (``dry_run=False``) only happens on explicit user OK.
+    """
+
+    title: str
+    variations: list[dict] = []
+    category_id: str = ""
+    category_discovery_query: str = ""
+    dry_run: bool = True

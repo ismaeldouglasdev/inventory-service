@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -590,6 +591,127 @@ class MercadoLivreAdapter(MarketplaceAdapter):
         except httpx.HTTPStatusError as exc:
             logger.error("ML publish failed: %s", exc.response.text[:600])
             raise
+
+    async def publish_product_with_variations(
+        self,
+        variations: list[dict[str, Any]],
+        *,
+        title: str,
+        category_id: str = "",
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """Publish the ospos SKUs as ONE ML family (COLOR variations).
+
+        Uses the new ML User-Product model: the old ``variations`` array is
+        gone — each color is published as its own item, all sharing the same
+        ``family_name`` and differing only in the ``COLOR`` attribute. ML
+        groups them automatically as variations of the same family.
+
+        ``variations`` expects a list of dicts, one per ospos SKU:
+          - ``sku``            → ospos SKU (mapped to the created item)
+          - ``color``          → ML color value_name (e.g. "Azul")
+          - ``price``          → unit price (base do markup)
+          - ``cost_price``     → optional (used if ml_price_base="cost")
+          - ``stock_quantity`` → int
+          - ``pictures``       → list of URLs (optional)
+
+        ``dry_run=True`` builds all bodies without calling the ML API or
+        persisting anything. ``dry_run=False`` POSTs one item per variation
+        and persists the SKU → item mappings.
+        """
+        if not variations:
+            raise ValueError("variations list is empty")
+
+        cat_id = category_id or settings.ml_default_category
+        bodies: list[dict[str, Any]] = []
+        for var in variations:
+            pricing = compute_ml_price(
+                var.get("price", 0),
+                var.get("cost_price"),
+            )
+            item_attributes: list[dict[str, Any]] = [
+                {"id": "BRAND", "value_name": var.get("brand") or "Elshaday"},
+                {"id": "MODEL", "value_name": "Garrafinha com Canudo"},
+                {"id": "SPORT_BOTTLE_CAPACITY", "value_name": var.get("capacity") or "400 ml"},
+                {"id": "BOTTLE_MATERIAL", "value_name": "Plástico"},
+                {"id": "COLOR", "value_name": var.get("color", "")},
+            ]
+            item_body: dict[str, Any] = {
+                "family_name": title,
+                "category_id": cat_id,
+                "price": pricing.price,
+                "currency_id": "BRL",
+                "available_quantity": int(var.get("stock_quantity", 1)),
+                "buying_mode": "buy_it_now",
+                "listing_type_id": pricing.listing_type_id,
+                "condition": "new",
+                "attributes": item_attributes,
+            }
+            pics = var.get("pictures") or []
+            if pics:
+                item_body["pictures"] = [{"source": url} for url in pics]
+            bodies.append(item_body)
+
+        if dry_run:
+            return {"dry_run": True, "bodies": bodies}
+
+        created: list[dict[str, Any]] = []
+        try:
+            for var, body in zip(variations, bodies):
+                if "pictures" not in body:
+                    pic_path = self._local_picture_path(var.get("sku"))
+                    if pic_path:
+                        pic_id = await self._upload_picture(pic_path)
+                        body["pictures"] = [{"id": pic_id}]
+                resp = await self._request("POST", "/items", json=body)
+                resp.raise_for_status()
+                external_id = resp.json()["id"]
+                sku = str(var.get("sku", ""))
+                if sku:
+                    await self._save_mapping(sku, external_id)
+                created.append(
+                    {
+                        "sku": sku or external_id,
+                        "color": var.get("color", ""),
+                        "external_id": external_id,
+                        "external_url": f"https://www.mercadolivre.com.br/items/{external_id}",
+                    }
+                )
+                logger.info("ML variation published: %s → ID %s", sku, external_id)
+        except httpx.HTTPStatusError as exc:
+            logger.error("ML variations publish failed: %s", exc.response.text[:600])
+            raise
+
+        return {"dry_run": False, "created": created}
+
+    def _local_picture_path(self, sku: str | None) -> str | None:
+        if not sku:
+            return None
+        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+            candidate = os.path.join(settings.ospos_uploads_dir, f"{sku}{ext}")
+            if os.path.isfile(candidate):
+                return candidate
+        return None
+
+    async def _upload_picture(self, file_path: str) -> str:
+        mime = (
+            "image/png"
+            if file_path.lower().endswith(".png")
+            else "image/webp"
+            if file_path.lower().endswith(".webp")
+            else "image/jpeg"
+        )
+        headers = self._headers()
+        headers.pop("Content-Type", None)
+        with open(file_path, "rb") as fh:
+            resp = await self._request(
+                "POST",
+                "/pictures",
+                headers=headers,
+                files={"file": (os.path.basename(file_path), fh, mime)},
+            )
+        resp.raise_for_status()
+        return resp.json()["id"]
 
     # ------------------------------------------------------------------
     # Catalog products (produto de catálogo do ML por EAN)
