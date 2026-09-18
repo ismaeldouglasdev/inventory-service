@@ -65,6 +65,8 @@ class OSPOSItem:
     reorder_level: float
     deleted: bool
     stock_quantity: float    # real stock at location 1
+    last_modified: str       # OSPOS DATETIME as string ("" when NULL)
+    has_image: bool          # pic_filename present in OSPOS
 
 
 class CDCAgent:
@@ -136,29 +138,33 @@ class CDCAgent:
           * not soft-deleted
           * present in ``channel_product_mapping`` for ``mercadolivre``
         """
+        # channel_product_mapping lives in SQLite, NOT OSPOS MySQL (would 1146).
+        skus = await self._get_ml_published_skus()
+        if not skus:
+            logger.debug("CDC: no ML-published items")
+            return []
+
         pool = await _pool()
         items: list[OSPOSItem] = []
+        placeholders = ", ".join("%s" for _ in skus)
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     SELECT i.item_id, i.name, COALESCE(i.category, ''),
                            COALESCE(i.item_number, ''), COALESCE(i.description, ''),
                            i.cost_price, i.unit_price, i.reorder_level, i.deleted,
-                           COALESCE(iq.quantity, 0)
+                           COALESCE(iq.quantity, 0),
+                           COALESCE(CAST(i.last_modified AS CHAR), ''),
+                           IF(i.pic_filename IS NOT NULL AND i.pic_filename <> '', 1, 0)
                     FROM ospos_items AS i
                     LEFT JOIN ospos_item_quantities AS iq
                            ON iq.item_id = i.item_id AND iq.location_id = %s
                     WHERE i.deleted = 0
-                      AND i.item_number IS NOT NULL
-                      AND i.item_number <> ''
-                      AND EXISTS (
-                          SELECT 1 FROM channel_product_mapping
-                          WHERE sku = i.item_number AND channel = 'mercadolivre'
-                      )
+                      AND i.item_number IN ({placeholders})
                     ORDER BY i.item_id ASC
                     """,
-                    (STOCK_LOCATION_ID,),
+                    (STOCK_LOCATION_ID, *skus),
                 )
                 rows = await cur.fetchall()
 
@@ -177,10 +183,47 @@ class CDCAgent:
                 reorder_level=float(row[7] or 0),
                 deleted=bool(row[8]),
                 stock_quantity=float(row[9] or 0),
+                last_modified=row[10] or "",
+                has_image=bool(row[11]),
             ))
 
-        logger.debug("CDC: %d ML-published item(s) loaded", len(items))
+        # Dedupe by SKU: OSPOS has duplicated item_numbers (e.g. the same
+        # barcode registered twice — 112 SKUs today). The per-SKU hash in
+        # product_mapping would thrash and re-emit events every cycle.
+        # Keep the best item per SKU using the SAME rule as store_sync
+        # (duplicate_rule.py) so CDC and store pick the same winner.
+        best_per_sku: dict[str, OSPOSItem] = {}
+        for item in items:
+            prev = best_per_sku.get(item.sku)
+            if prev is None or self._item_score(item) > self._item_score(prev):
+                best_per_sku[item.sku] = item
+        items = list(best_per_sku.values())
+        logger.debug("CDC: %d ML-published item(s) after SKU dedupe", len(items))
         return items
+
+    async def _get_ml_published_skus(self) -> list[str]:
+        """SKUs published on ML, read from the local SQLite mapping."""
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(ChannelProductMapping.sku).where(
+                    ChannelProductMapping.channel == "mercadolivre",
+                    ChannelProductMapping.status == "active",
+                )
+            )
+            return [row[0] for row in result.all()]
+
+    @staticmethod
+    def _item_score(item: OSPOSItem) -> tuple:
+        """Higher is better — same priorities as duplicate_rule.product_score:
+        latest last_modified, more stock, uppercase name, has image, price."""
+        name = (item.name or "").strip()
+        return (
+            item.last_modified,
+            item.stock_quantity,
+            int(bool(name) and name == name.upper()),
+            int(item.has_image),
+            item.unit_price,
+        )
 
     # ── Change detection ─────────────────────────────────────────────
 
