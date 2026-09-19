@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     # ── CDC Agent ─────────────────────────────────────────────────────
     cdc_enabled: bool = True
     cdc_poll_interval: int = 30  # seconds
+    cdc_reconcile_on_startup: bool = True  # 1ª varredura força stock.updated p/ todos os ativos
 
     # ── ML Order Poller (fallback do webhook orders_v2) ───────────────
     ml_poll_enabled: bool = True

@@ -331,16 +331,23 @@ class MercadoLivreAdapter(MarketplaceAdapter):
     # ------------------------------------------------------------------
 
     async def update_stock(self, sku: str, quantity: int) -> bool:
-        """Update available quantity on Mercado Livre."""
+        """Update available quantity on Mercado Livre.
+
+        ``external_id`` can be ``"MLB123"`` (item-level) or
+        ``"MLB123:4567890"`` (item_id:variation_id) for variation listings.
+        """
         external_id = await self.get_external_id(sku)
         if external_id is None:
             logger.warning("Cannot update stock — SKU %s not found on ML", sku)
             return False
 
-        # ML uses 'available_quantity' field
-        body = {"available_quantity": quantity}
+        parts = external_id.split(":")
+        url = f"/items/{parts[0]}"
+        body: dict[str, Any] = {"available_quantity": quantity}
+        if len(parts) > 1:
+            url += f"/variations/{parts[1]}"
         try:
-            resp = await self._request("PUT", f"/items/{external_id}", json=body)
+            resp = await self._request("PUT", url, json=body)
             resp.raise_for_status()
             logger.info("ML stock updated for SKU %s (ID %s) → %d", sku, external_id, quantity)
             return True
@@ -359,9 +366,13 @@ class MercadoLivreAdapter(MarketplaceAdapter):
             logger.warning("Cannot update price — SKU %s not found on ML", sku)
             return False
 
-        body = {"price": price}
+        parts = external_id.split(":")
+        url = f"/items/{parts[0]}"
+        body: dict[str, Any] = {"price": price}
+        if len(parts) > 1:
+            url += f"/variations/{parts[1]}"
         try:
-            resp = await self._request("PUT", f"/items/{external_id}", json=body)
+            resp = await self._request("PUT", url, json=body)
             resp.raise_for_status()
             logger.info("ML price updated for SKU %s (ID %s) → %.2f", sku, external_id, price)
             return True
@@ -546,7 +557,7 @@ class MercadoLivreAdapter(MarketplaceAdapter):
             product.get("cost_price"),
         )
         body: dict[str, Any] = {
-            "title": product.get("title", ""),
+            "family_name": product.get("title", ""),
             "category_id": product.get("category_id", settings.ml_default_category),
             "price": pricing.price,
             "currency_id": "BRL",
@@ -567,15 +578,27 @@ class MercadoLivreAdapter(MarketplaceAdapter):
         if description:
             body["description"] = {"plain_text": description}
 
-        # Pictures
+        # Pictures — local file paths are uploaded to ML (mirrors the
+        # variations publish path); URL strings are passed as source.
         pictures = product.get("pictures", [])
         if pictures:
-            body["pictures"] = [{"source": url} for url in pictures]
+            pics: list[dict[str, str]] = []
+            for entry in pictures:
+                if entry and os.path.isfile(entry):
+                    pics.append({"id": await self._upload_picture(entry)})
+                else:
+                    pics.append({"source": entry})
+            body["pictures"] = pics
 
-        # Attributes (brand, model, etc.)
+        # Attributes (brand, model, etc.) — the User-Product model requires
+        # BRAND + MODEL (category MLB271793) so ML can build the listing title.
         attributes = product.get("attributes", [])
-        if attributes:
-            body["attributes"] = attributes
+        if not attributes:
+            attributes = [
+                {"id": "BRAND", "value_name": "Elshaday"},
+                {"id": "MODEL", "value_name": product.get("sku", "Sem modelo")},
+            ]
+        body["attributes"] = attributes
 
         try:
             resp = await self._request("POST", "/items", json=body)

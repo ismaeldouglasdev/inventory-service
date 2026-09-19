@@ -162,8 +162,10 @@ class MLOrderPoller:
         (mapping, idempotent sale write, stock sync), so here we only paginate
         the search results.
         """
+        # ML docs/tests: /orders/search accepts seller= (seller_id= is
+        # rejected with caller.id.invalid since ~2026-09-19).
         params = {
-            "seller_id": str(user_id),
+            "seller": str(user_id),
             "order.date_created.from": since,
             "sort": "date_asc",
             "limit": "50",

@@ -23,8 +23,11 @@ The published set is small (tens of items), so the agent polls ALL of
 them every cycle and diffs against ``product_mapping.last_hash``. This is
 restart-safe and idempotent, and — because it re-examines existing
 items — it correctly picks up stock/price changes to items that were
-already scanned. The very first run only seeds the baseline hash, so
-enabling it never re-publishes anything.
+already scanned. On startup, the first run RE-EMITS ``stock.updated``
+for every published item when ``cdc_reconcile_on_startup`` is enabled
+(default), so divergences that predate the mapping (silent seed,
+external adoption) converge on boot; a mapping created for a newly
+seen SKU also emits immediately instead of seeding silently.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
+from app.config import settings
 from app.database import async_session_factory
 from app.models.channel_product_mapping import ChannelProductMapping
 from app.models.event_store import EventStore
@@ -82,6 +86,7 @@ class CDCAgent:
     def __init__(self, poll_interval: float = 30.0) -> None:
         self.poll_interval = poll_interval
         self._running = False
+        self._reconcile_pending = True
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -97,10 +102,17 @@ class CDCAgent:
             logger.debug("CDC: no ML-published items")
             return 0
 
+        # Startup reconcile (unless disabled): force stock.updated for
+        # every active item once, so divergences that predate the mapping
+        # (silent seed, external adoption) converge on boot. Clears even if
+        # fetch fails later — a retry would just re-emit idempotently.
+        force = self._reconcile_pending and settings.cdc_reconcile_on_startup
+        self._reconcile_pending = False
+
         changed = 0
         async with async_session_factory() as session:
             for item in items:
-                created = await self._check_and_create_event(session, item)
+                created = await self._check_and_create_event(session, item, force=force)
                 changed += created
 
             await session.commit()
@@ -231,11 +243,14 @@ class CDCAgent:
         self,
         session: Any,
         item: OSPOSItem,
+        force: bool = False,
     ) -> int:
         """Compare an ML-published item with its stored hash.
 
         Returns the number of events created (usually 1: a
         ``stock.updated``; 2 when price also changed; 0 on no change).
+        ``force`` emits an update even when the hash is unchanged
+        (startup reconcile, fixes silent-seed/adoption divergences).
         """
         sku = item.sku
         current_hash = self._hash_item(item)
@@ -247,8 +262,9 @@ class CDCAgent:
 
         if mapping is None:
             # Published on ML but not yet in product_mapping (e.g. adopted
-            # externally). Seed a baseline WITHOUT emitting events, so the
-            # next change is the first one to sync.
+            # externally). Seed a baseline AND emit one stock.updated so
+            # the current stock converges immediately instead of waiting
+            # for the next change.
             session.add(ProductMapping(
                 sku=sku,
                 ospos_id=item.item_id,
@@ -257,10 +273,16 @@ class CDCAgent:
                 last_hash=current_hash,
                 last_sync_at=datetime.now(timezone.utc),
             ))
-            logger.info("CDC: baseline seeded SKU=%s (no event)", sku)
-            return 0
+            session.add(create_event(
+                event_type="stock.updated",
+                payload={"sku": sku, "quantity": int(item.stock_quantity)},
+                sku=sku,
+                channel="mercadolivre",
+            ))
+            logger.info("CDC: baseline seeded SKU=%s + stock.updated", sku)
+            return 1
 
-        if mapping.last_hash == current_hash and mapping.last_hash is not None:
+        if mapping.last_hash == current_hash and mapping.last_hash is not None and not force:
             return 0  # no change
 
         # Changed → update hash and emit update event(s).
